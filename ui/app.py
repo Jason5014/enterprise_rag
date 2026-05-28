@@ -365,8 +365,40 @@ def get_pipeline(config_name: str) -> RAGPipeline:
     return st.session_state.pipeline
 
 
+@st.cache_data(ttl=60)
+def _load_eval_questions():
+    """加载评测问题集（缓存60秒）"""
+    eval_file = Path("data/eval_questions.json")
+    if eval_file.exists():
+        with open(eval_file, 'r', encoding='utf-8') as f:
+            eval_data = json.load(f)
+        return {
+            "questions": eval_data.get("questions", []),
+            "ground_truth": eval_data.get("ground_truth", {}),
+            "question_categories": eval_data.get("question_categories", {}),
+            "categories": eval_data.get("categories", {}),
+            "has_ground_truth": bool(eval_data.get("ground_truth", {}))
+        }
+    return {"questions": [], "ground_truth": {}, "question_categories": {}, "categories": {}, "has_ground_truth": False}
+
+
+@st.cache_resource
+def get_eval_history():
+    """获取评测历史管理器（缓存，避免每次rerun重读JSONL）"""
+    from src.eval_history import EvalHistory
+    return EvalHistory()
+
+
+@st.cache_resource
+def get_feedback_collector():
+    """获取反馈收集器（缓存，避免每次rerun重读JSONL）"""
+    from src.feedback_collector import FeedbackCollector
+    return FeedbackCollector()
+
+
+@st.cache_data(ttl=60)
 def get_system_status():
-    """获取系统状态"""
+    """获取系统状态（缓存60秒）"""
     data_dir = Path("data")
 
     # 统计向量库（实际存储在chunked/vector_db/）
@@ -845,9 +877,7 @@ ERROR_TYPE_OPTIONS = {
 
 def handle_feedback(answer_id: str, helpful: bool):
     """处理简单反馈（👍）"""
-    from src.feedback_collector import FeedbackCollector
-
-    collector = FeedbackCollector()
+    collector = get_feedback_collector()
     for item in st.session_state.history:
         if item.get("answer_id") == answer_id:
             retrieval_log = item.get("retrieval_log", {})
@@ -877,9 +907,7 @@ def handle_feedback(answer_id: str, helpful: bool):
 
 def handle_bad_feedback(answer_id: str, error_type: str, correct_answer: str, comment: str):
     """处理详细负面反馈（👎表单提交）"""
-    from src.feedback_collector import FeedbackCollector
-
-    collector = FeedbackCollector()
+    collector = get_feedback_collector()
     for item in st.session_state.history:
         if item.get("answer_id") == answer_id:
             retrieval_log = item.get("retrieval_log", {})
@@ -1072,21 +1100,12 @@ def render_eval_page():
     </div>
     """, unsafe_allow_html=True)
 
-    eval_file = Path("data/eval_questions.json")
-    if eval_file.exists():
-        with open(eval_file, 'r', encoding='utf-8') as f:
-            eval_data = json.load(f)
-        all_questions = eval_data.get("questions", [])
-        ground_truth = eval_data.get("ground_truth", {})
-        question_categories = eval_data.get("question_categories", {})
-        categories_meta = eval_data.get("categories", {})
-        has_ground_truth = bool(ground_truth)
-    else:
-        all_questions = []
-        ground_truth = {}
-        question_categories = {}
-        categories_meta = {}
-        has_ground_truth = False
+    eval_questions_data = _load_eval_questions()
+    all_questions = eval_questions_data["questions"]
+    ground_truth = eval_questions_data["ground_truth"]
+    question_categories = eval_questions_data["question_categories"]
+    categories_meta = eval_questions_data["categories"]
+    has_ground_truth = eval_questions_data["has_ground_truth"]
 
     # 场景分类筛选
     if categories_meta:
@@ -1450,8 +1469,7 @@ def render_eval_page():
                 st.session_state.eval_mode = eval_mode
 
                 # 保存评测结果到历史
-                from src.eval_history import EvalHistory
-                eval_history = EvalHistory()
+                eval_history = get_eval_history()
                 for r in all_results:
                     # 构建配置快照
                     cfg_name = r.get("config", "unknown")
@@ -1529,7 +1547,7 @@ def render_eval_page():
             # 找出最佳配置
             st.markdown("**🏆 各项最佳指标：**")
             best_col_info = {}
-            for col in ["Recall@1", "Recall@3", "Recall@5", "MRR", "NDCG@5", "平均延迟"]:
+            for col in ["Hit@1", "Hit@5", "Recall@5", "MRR", "NDCG@5", "平均延迟"]:
                 numeric_vals = []
                 for r, row in zip(all_results, rows):
                     val = float(row[col].replace("%", "").replace("ms", ""))
@@ -1541,12 +1559,14 @@ def render_eval_page():
                     best = max(numeric_vals, key=lambda x: x[0])
                     best_col_info[col] = f"{best[1].upper()} ({best[0]:.2%})"
 
-            bc1, bc2, bc3 = st.columns(3)
+            bc1, bc2, bc3, bc4 = st.columns(4)
             with bc1:
-                st.metric("Recall@5 最佳", best_col_info.get("Recall@5", "-"))
+                st.metric("Hit@1 最佳", best_col_info.get("Hit@1", "-"))
             with bc2:
-                st.metric("MRR 最佳", best_col_info.get("MRR", "-"))
+                st.metric("Hit@5 最佳", best_col_info.get("Hit@5", "-"))
             with bc3:
+                st.metric("MRR 最佳", best_col_info.get("MRR", "-"))
+            with bc4:
                 st.metric("延迟最低", best_col_info.get("平均延迟", "-"))
 
             # 按场景分类对比
@@ -1790,8 +1810,8 @@ def render_eval_page():
 
     st.markdown("---")
 
-    # 显示评估结果
-    if st.session_state.get("eval_results"):
+    # 显示评估结果（单配置模式才渲染详情，多配置模式已在上方渲染对比表格）
+    if st.session_state.get("eval_results") and eval_mode not in ("多配置对比", "自定义变体对比"):
         # 统一处理：可能是 list（按钮评估）或 dict（旧版 inline 评估）
         raw_results = st.session_state.eval_results
         if isinstance(raw_results, list):
@@ -1895,8 +1915,7 @@ def render_eval_page():
     # ===== 评测历史 =====
     st.markdown("---")
     st.markdown("### 📊 评测历史")
-    from src.eval_history import EvalHistory
-    eval_history = EvalHistory()
+    eval_history = get_eval_history()
     history = eval_history.get_history(limit=20)
 
     if history:
@@ -2149,8 +2168,7 @@ def render_monitor_page():
     </div>
     """, unsafe_allow_html=True)
 
-    from src.feedback_collector import FeedbackCollector
-    collector = FeedbackCollector()
+    collector = get_feedback_collector()
 
     # ===== 概览统计 =====
     analysis = collector.analyze_feedback()
