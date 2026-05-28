@@ -1790,63 +1790,6 @@ def render_eval_page():
 
     st.markdown("---")
 
-    if run_btn and questions:
-        with st.spinner("评估中，请稍候..."):
-            try:
-                pipeline = get_pipeline(st.session_state.current_config)
-                retrieval_func = lambda query, p=pipeline: p.retrieve(query, top_k=20)
-                evaluator = RetrievalEvaluator(top_k=[1, 3, 5, 10])
-
-                all_metrics = {f"recall@{k}": [] for k in [1, 3, 5, 10]}
-                all_metrics.update({f"hit@{k}": [] for k in [1, 3, 5, 10]})
-                all_metrics["mrr"] = []
-                all_metrics["ndcg@5"] = []
-                query_results = []
-                latencies = []
-
-                for q in questions:
-                    start = time.time()
-                    results = retrieval_func(q)
-                    elapsed = (time.time() - start) * 1000
-                    latencies.append(elapsed)
-                    retrieved_ids = [r.get("chunk_id", "") for r in results[:10]]
-                    relevant = ground_truth.get(q, {}).get("relevant_chunks", [])
-
-                    query_results.append({
-                        "query": q,
-                        "retrieved_ids": retrieved_ids,
-                        "latency_ms": elapsed
-                    })
-
-                    if relevant:
-                        for k in [1, 3, 5, 10]:
-                            all_metrics[f"recall@{k}"].append(
-                                evaluator.compute_recall(retrieved_ids, relevant, k)
-                            )
-                            all_metrics[f"hit@{k}"].append(
-                                evaluator.compute_hit(retrieved_ids, relevant, k)
-                            )
-                        all_metrics["mrr"].append(evaluator.compute_mrr(retrieved_ids, relevant))
-                        all_metrics["ndcg@5"].append(evaluator.compute_ndcg(retrieved_ids, relevant, k=5))
-
-                avg_metrics = {name: sum(v) / len(v) if v else 0.0 for name, v in all_metrics.items()}
-                avg_latency = sum(latencies) / len(latencies) if latencies else 0
-
-                st.session_state.eval_results = [{
-                    "config": st.session_state.current_config,
-                    "question_count": len(questions),
-                    "avg_latency_ms": avg_latency,
-                    "min_latency_ms": min(latencies) if latencies else 0,
-                    "max_latency_ms": max(latencies) if latencies else 0,
-                    "query_results": query_results,
-                    "ground_truth_available": has_ground_truth,
-                    "metrics": avg_metrics
-                }]
-            except Exception as e:
-                st.error(f"评估失败: {e}")
-                import traceback
-                st.code(traceback.format_exc())
-
     # 显示评估结果
     if st.session_state.get("eval_results"):
         # 统一处理：可能是 list（按钮评估）或 dict（旧版 inline 评估）
