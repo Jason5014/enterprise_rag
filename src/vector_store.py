@@ -15,6 +15,7 @@ except ImportError:
     FAISS_AVAILABLE = False
 
 from config.embedding_config import EmbeddingConfig
+from src.utils import get_api_key
 
 
 class VectorStore:
@@ -171,13 +172,10 @@ class VectorStore:
         return np.array(embeddings)
 
     def _get_api_key(self) -> str:
-        """获取API密钥"""
-        from dotenv import load_dotenv
-        load_dotenv()
-        api_key = os.getenv("DASHSCOPE_API_KEY", "")
-        if not api_key or api_key == "your_dashscope_api_key_here":
+        try:
+            return get_api_key()
+        except ValueError:
             return ""
-        return api_key
 
     def get_stats(self) -> Dict[str, Any]:
         """获取向量库统计信息"""

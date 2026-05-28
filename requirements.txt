@@ -11,6 +11,9 @@ faiss-cpu>=1.12.0
 # BM25检索
 rank-bm25>=0.2.2
 
+# 中文分词（BM25）
+jieba>=0.42.1
+
 # PDF解析 - MinerU在线API
 # 无需安装，使用HTTP调用 MinerU 云服务
 # 访问 https://mineru.net/apiManage/docs 获取API文档
@@ -46,3 +49,13 @@ click>=8.0.0
 
 # 测试
 pytest>=7.0.0
+
+# FastAPI 后端
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+sse-starlette>=1.8.0
+python-multipart>=0.0.9
+
+# JWT + 密码
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4

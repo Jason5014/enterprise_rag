@@ -1,6 +1,7 @@
-"""重排模块 - LLM重排"""
+"""重排模块 - LLM重排（支持 Listwise / Pointwise）"""
 import os
 import json
+import re
 import logging
 from typing import List, Dict, Any, Optional
 from pathlib import Path
@@ -15,6 +16,7 @@ except ImportError:
     DASHSCOPE_AVAILABLE = False
 
 from config.retrieval_config import RetrievalConfig
+from src.utils import get_api_key
 
 
 class LLMReranker:
@@ -42,13 +44,23 @@ class LLMReranker:
 
 评估："""
 
+    LISTWISE_SYSTEM_PROMPT = """你是检索结果重排专家。给定查询和多个候选文本块，对每个文本块与查询的相关性打分（0-10）。
+
+输出严格的JSON格式，不要有任何其他内容：
+{"rankings": [{"index": 0, "score": 8}, {"index": 1, "score": 3}, ...]}
+
+说明：
+- index 对应候选文本的序号（从0开始）
+- score 范围 0-10，10分最相关
+- 必须为每个候选给出分数"""
+
     def __init__(self, config: Optional[RetrievalConfig] = None):
         self.config = config or RetrievalConfig()
         self.rerank_top_k = self.config.rerank_top_k
         self.llm_weight = self.config.llm_weight
+        self.rerank_mode = getattr(self.config, 'rerank_mode', 'listwise')
         self.model = "qwen-turbo"
-        self.batch_size = 2  # 每次重排的候选数量
-        self.max_workers = 1  # 串行避免QPS超限
+        self.batch_size = 2  # pointwise 模式每批数量
         self._api_unavailable = False  # API不可用标记
 
     def rerank(self, query: str, candidates: List[Dict[str, Any]], top_k: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -69,18 +81,21 @@ class LLMReranker:
         effective_top_k = top_k if top_k is not None else self.rerank_top_k
 
         if self._api_unavailable:
-            # API已标记不可用，直接返回原结果
             for i, r in enumerate(candidates[:effective_top_k]):
                 r["combined_score"] = r.get("score", 0)
                 r["rank"] = i + 1
             return candidates[:effective_top_k]
 
-        # 按批次处理
-        all_scores = []
-        for i in range(0, len(candidates), self.batch_size):
-            batch = candidates[i:i + self.batch_size]
-            batch_scores = self._rerank_batch(query, batch)
-            all_scores.extend(batch_scores)
+        # 根据模式选择重排方式
+        if self.rerank_mode == "listwise":
+            all_scores = self._rerank_listwise(query, candidates)
+        else:
+            # pointwise：按批次逐条处理
+            all_scores = []
+            for i in range(0, len(candidates), self.batch_size):
+                batch = candidates[i:i + self.batch_size]
+                batch_scores = self._rerank_batch(query, batch)
+                all_scores.extend(batch_scores)
 
         # 合并分数
         for i, candidate in enumerate(candidates):
@@ -101,6 +116,59 @@ class LLMReranker:
             r["rank"] = i + 1
 
         return sorted_results[:effective_top_k]
+
+    def _rerank_listwise(self, query: str, candidates: List[Dict[str, Any]]) -> List[float]:
+        """Listwise 重排：一次 API 调用对所有候选打分"""
+        if not candidates:
+            return []
+        if self._api_unavailable:
+            return [0.0] * len(candidates)
+
+        blocks = "\n\n---\n\n".join(
+            f"[{i}]\n{c.get('parent_text', c.get('text', ''))[:800]}"
+            for i, c in enumerate(candidates)
+        )
+        user_prompt = f"查询：{query}\n\n候选文本块：\n{blocks}"
+
+        try:
+            api_key = get_api_key()
+            response = Generation.call(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": self.LISTWISE_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt}
+                ],
+                api_key=api_key,
+                temperature=0
+            )
+            if response.status_code != 200:
+                logger.error("Listwise重排 API失败: %s", response.message)
+                return [0.0] * len(candidates)
+
+            content = response.output.get("text", "").strip()
+            # 提取 JSON
+            match = re.search(r'\{.*\}', content, re.DOTALL)
+            if not match:
+                logger.warning("Listwise重排无法解析JSON: %s", content[:200])
+                return [0.0] * len(candidates)
+
+            data = json.loads(match.group())
+            rankings = data.get("rankings", [])
+            scores = [0.0] * len(candidates)
+            for item in rankings:
+                idx = item.get("index", -1)
+                score = item.get("score", 0)
+                if 0 <= idx < len(scores):
+                    scores[idx] = float(score)
+            return scores
+
+        except Exception as e:
+            if "ConnectionError" in type(e).__name__ or "NameResolutionError" in str(e):
+                logger.warning("Listwise重排 API不可用，跳过: %s", type(e).__name__)
+                self._api_unavailable = True
+            else:
+                logger.error("Listwise重排失败: %s", e)
+            return [0.0] * len(candidates)
 
     def _rerank_batch(self, query: str, batch: List[Dict[str, Any]]) -> List[float]:
         """对一批候选进行重排评分"""
@@ -138,7 +206,7 @@ class LLMReranker:
         )
 
         try:
-            api_key = self._get_api_key()
+            api_key = get_api_key()
             response = Generation.call(
                 model=self.model,
                 messages=[
@@ -175,14 +243,6 @@ class LLMReranker:
             logger.error("解析LLM分数失败: %s", e)
             return 0
 
-    def _get_api_key(self) -> str:
-        """获取API密钥"""
-        from dotenv import load_dotenv
-        load_dotenv()
-        api_key = os.getenv("DASHSCOPE_API_KEY", "")
-        if not api_key or api_key == "your_dashscope_api_key_here":
-            raise ValueError("请在.env中设置DASHSCOPE_API_KEY")
-        return api_key
 
 
 class JinaReranker:

@@ -16,6 +16,7 @@ except ImportError:
     DASHSCOPE_AVAILABLE = False
 
 from config.retrieval_config import RetrievalConfig
+from src.utils import get_api_key
 
 
 class MultiQueryGenerator:
@@ -44,16 +45,7 @@ SMIC 2024年财报收入
         self.model = "qwen-turbo"
         logger.debug("MultiQueryGenerator.__init__: DASHSCOPE_AVAILABLE=%s, enable_multiquery=%s", DASHSCOPE_AVAILABLE, self.config.enable_multiquery)
         if DASHSCOPE_AVAILABLE:
-            self.api_key = self._get_api_key()
-
-    def _get_api_key(self) -> str:
-        """获取API密钥"""
-        from dotenv import load_dotenv
-        load_dotenv()
-        api_key = os.getenv("DASHSCOPE_API_KEY", "")
-        if not api_key or api_key == "your_dashscope_api_key_here":
-            raise ValueError("请在.env中设置DASHSCOPE_API_KEY")
-        return api_key
+            self.api_key = get_api_key()
 
     def generate_variants(self, query: str) -> List[str]:
         """生成查询变体"""
@@ -232,7 +224,7 @@ class QueryRewriter:
                 "used_history": False
             }
 
-        api_key = self._get_api_key()
+        api_key = get_api_key()
 
         user_content = query
         if history_context:
@@ -280,11 +272,3 @@ class QueryRewriter:
                 "used_history": False
             }
 
-    def _get_api_key(self) -> str:
-        """获取API密钥"""
-        from dotenv import load_dotenv
-        load_dotenv()
-        api_key = os.getenv("DASHSCOPE_API_KEY", "")
-        if not api_key or api_key == "your_dashscope_api_key_here":
-            raise ValueError("请在.env中设置DASHSCOPE_API_KEY")
-        return api_key

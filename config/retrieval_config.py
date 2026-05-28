@@ -21,6 +21,9 @@ def _load_rules_from_yaml() -> List[Dict[str, Any]]:
 class RetrievalConfig(BaseConfig):
     """检索相关配置"""
 
+    # 索引数据目录（允许每个知识库指向不同目录）
+    index_dir: str = "data/chunked"
+
     # 分块配置
     chunk_size: int = 500  # 子Chunk大小（字符数）
     chunk_overlap: int = 150  # 子Chunk重叠大小
@@ -28,9 +31,11 @@ class RetrievalConfig(BaseConfig):
     enable_parent_retrieval: bool = True  # 是否启用父子关联
 
     # 检索配置
-    bm25_weight: float = 0.3  # BM25权重
-    vector_weight: float = 0.7  # Vector权重
+    bm25_weight: float = 0.3  # BM25权重（fusion_method=weighted 时生效）
+    vector_weight: float = 0.7  # Vector权重（fusion_method=weighted 时生效）
     top_k_retrieval: int = 20  # 召回数量
+    fusion_method: str = "rrf"  # 融合算法：rrf（推荐）或 weighted
+    rrf_k: int = 60  # RRF 平滑参数，越大排名差异越平缓
 
     # MultiQuery配置
     enable_multiquery: bool = True  # 是否启用MultiQuery
@@ -44,6 +49,7 @@ class RetrievalConfig(BaseConfig):
     rerank_top_k: int = 5  # 重排后返回数量
     llm_weight: float = 0.7  # LLM分数权重
     use_jina_reranker: bool = False  # 使用Jina替代LLM重排
+    rerank_mode: str = "listwise"  # 重排模式：listwise（一次调用）或 pointwise（逐条）
 
     # 对话历史配置
     enable_history: bool = True  # 是否启用对话历史

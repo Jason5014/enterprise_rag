@@ -132,10 +132,46 @@ def use_config(name):
 @cli.command()
 @click.argument("question")
 @click.option("--config", "-c", default="base", help="配置名称")
-def query(question, config):
+@click.option("--details", is_flag=True, default=False, help="显示检索详情")
+def query(question, config, details):
     """单次问答"""
-    click.echo(f"使用配置 [{config}] 处理问题: {question}")
-    click.echo("(问答功能待实现)")
+    from src.pipeline import RAGPipeline
+    from config.embedding_config import EmbeddingConfig
+
+    try:
+        preset = get_preset(config)
+    except ValueError:
+        click.echo(f"配置 '{config}' 不存在，使用 base", err=True)
+        preset = get_preset("base")
+
+    config_bundle = ConfigBundle(
+        retrieval=preset.retrieval or RetrievalConfig(),
+        answer=preset.answer or AnswerConfig(),
+        pdf=preset.pdf,
+        embedding=preset.embedding or EmbeddingConfig()
+    )
+
+    click.echo(f"使用配置 [{config}]，加载 Pipeline...")
+    pipeline = RAGPipeline(config_bundle)
+
+    click.echo(f"\n问题: {question}\n")
+    result = pipeline.answer_single_question(question, return_retrieval_details=details)
+
+    click.echo("=" * 60)
+    click.echo(f"答案: {result['final_answer']}")
+
+    if result.get("step_by_step_analysis"):
+        click.echo(f"\n推理过程:\n{result['step_by_step_analysis'][:300]}...")
+
+    if result.get("relevant_pages"):
+        click.echo(f"\n引用页码: {result['relevant_pages']}")
+
+    if details and result.get("retrieval_details"):
+        rd = result["retrieval_details"]
+        click.echo(f"\n改写查询: {rd.get('rewritten_query', '')}")
+        click.echo(f"查询变体: {rd.get('query_variants', [])}")
+        click.echo(f"检索结果数: {len(rd.get('retrieval_results', []))}")
+    click.echo("=" * 60)
 
 
 @cli.command()
@@ -312,10 +348,62 @@ def process_reports(config, input_dir, output_dir):
 
 @cli.command()
 @click.option("--config", "-c", default="base", help="配置名称")
-def process_questions(config):
-    """批量处理问题"""
-    click.echo(f"使用配置 [{config}] 处理问题...")
-    click.echo("(问题处理功能待实现)")
+@click.option("--input", "-i", "input_file", default="data/eval_questions.json", help="问题文件路径（JSON）")
+@click.option("--output", "-o", default="data/eval_results/answers.json", help="答案输出路径")
+def process_questions(config, input_file, output):
+    """批量处理问题，输出答案文件"""
+    import json as _json
+    from src.pipeline import RAGPipeline
+    from config.embedding_config import EmbeddingConfig
+    from datetime import datetime
+
+    try:
+        preset = get_preset(config)
+    except ValueError:
+        click.echo(f"配置 '{config}' 不存在，使用 base", err=True)
+        preset = get_preset("base")
+
+    questions_path = Path(input_file)
+    if not questions_path.exists():
+        click.echo(f"问题文件不存在: {input_file}", err=True)
+        sys.exit(1)
+
+    with open(questions_path, "r", encoding="utf-8") as f:
+        data = _json.load(f)
+
+    questions = data.get("questions", [])
+    if not questions:
+        click.echo("问题列表为空", err=True)
+        sys.exit(1)
+
+    click.echo(f"使用配置 [{config}]，共 {len(questions)} 个问题")
+
+    config_bundle = ConfigBundle(
+        retrieval=preset.retrieval or RetrievalConfig(),
+        answer=preset.answer or AnswerConfig(),
+        pdf=preset.pdf,
+        embedding=preset.embedding or EmbeddingConfig()
+    )
+    pipeline = RAGPipeline(config_bundle)
+
+    answers = {}
+    with click.progressbar(questions, label="处理问题") as bar:
+        for q in bar:
+            result = pipeline.answer_single_question(q)
+            answers[q] = result["final_answer"]
+
+    output_path = Path(output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_data = {
+        "config": config,
+        "timestamp": datetime.now().isoformat(),
+        "question_count": len(questions),
+        "answers": answers
+    }
+    with open(output_path, "w", encoding="utf-8") as f:
+        _json.dump(output_data, f, ensure_ascii=False, indent=2)
+
+    click.echo(f"\n完成！答案已保存至: {output}")
 
 
 @cli.command()

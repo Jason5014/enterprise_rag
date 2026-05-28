@@ -17,6 +17,7 @@ except ImportError:
 from config.answer_config import AnswerConfig
 from config.retrieval_config import RetrievalConfig
 from src.query_router import QueryRouter, QueryType, PromptBuilder
+from src.utils import get_api_key
 
 
 class AnswerGenerator:
@@ -88,7 +89,7 @@ class AnswerGenerator:
         if DASHSCOPE_AVAILABLE:
             try:
                 logger.debug("调用LLM生成答案...")
-                response = self._call_llm(prompt)
+                response = self._call_llm(prompt, history=history)
                 logger.debug("LLM响应长度: %d 字符", len(response))
                 logger.debug("LLM响应内容:\n%s...", response[:500])
                 result = self._parse_response(response, context)
@@ -105,28 +106,33 @@ class AnswerGenerator:
         return result
 
     def _build_prompt(self, query: str, context_texts: List[str], query_type: QueryType) -> str:
-        """根据问题类型构建Prompt"""
-        # 截断过长的上下文
+        """根据问题类型构建Prompt，按 chunk 边界截断而非字符边界"""
         max_chars = 8000
-        context_combined = "\n\n".join(context_texts)
-        if len(context_combined) > max_chars:
-            context_combined = context_combined[:max_chars] + "\n\n...(内容已截断)"
+        selected = []
+        total = 0
+        for text in context_texts:
+            if total + len(text) > max_chars:
+                break  # 整块跳过，不截半块
+            selected.append(text)
+            total += len(text)
+        if not selected:
+            # 单个 chunk 超长时只截这一个，保证至少有内容
+            selected = [context_texts[0][:max_chars]]
 
-        return PromptBuilder.build_prompt(query, [context_combined], query_type)
+        return PromptBuilder.build_prompt(query, selected, query_type)
 
-    def _call_llm(self, prompt: str) -> str:
-        """调用LLM"""
-        from dotenv import load_dotenv
-        load_dotenv()
-        api_key = os.getenv("DASHSCOPE_API_KEY", "")
-        if not api_key or api_key == "your_dashscope_api_key_here":
-            raise ValueError("请在.env中设置DASHSCOPE_API_KEY")
+    def _call_llm(self, prompt: str, history: Optional[List[Dict]] = None) -> str:
+        """调用LLM，支持多轮对话历史"""
+        api_key = get_api_key()
+
+        messages = []
+        if history:
+            messages.extend(history)  # 历史轮次在前
+        messages.append({"role": "user", "content": prompt})
 
         response = Generation.call(
             model=self.model,
-            messages=[
-                {"role": "user", "content": prompt}
-            ],
+            messages=messages,
             api_key=api_key,
             temperature=self.temperature,
             max_tokens=self.max_tokens
@@ -176,6 +182,60 @@ class AnswerGenerator:
                 result["relevant_pages"].append(page)
 
         return result
+
+    def stream_generate(self, query: str, context: List[Dict[str, Any]],
+                        history: Optional[List[Dict]] = None):
+        """流式生成答案，逐 token yield 字符串。供 SSE 接口使用。"""
+        if not DASHSCOPE_AVAILABLE:
+            yield "（DashScope 不可用，无法流式生成）"
+            return
+
+        context_texts = []
+        for ctx in context:
+            text = ctx.get("parent_text", ctx.get("text", ""))
+            if text:
+                context_texts.append(text)
+
+        if not context_texts:
+            yield "未能从知识库中找到相关信息。"
+            return
+
+        query_type = QueryType.UNKNOWN
+        if self.enable_schema_routing:
+            try:
+                classification = self.query_router.classify(query)
+                query_type = classification["type"]
+            except Exception:
+                pass
+
+        prompt = self._build_prompt(query, context_texts, query_type)
+        messages = []
+        if history:
+            messages.extend(history)
+        messages.append({"role": "user", "content": prompt})
+
+        try:
+            api_key = get_api_key()
+            response = Generation.call(
+                model=self.model,
+                messages=messages,
+                api_key=api_key,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                stream=True,
+                incremental_output=True,
+            )
+            for chunk in response:
+                if chunk.status_code == 200:
+                    token = chunk.output.get("text", "")
+                    if token:
+                        yield token
+                else:
+                    logger.error("流式 API 错误: %s", chunk.message)
+                    break
+        except Exception as e:
+            logger.error("流式生成失败: %s", e)
+            yield f"\n（生成中断: {e}）"
 
     def _fallback_result(self) -> Dict[str, Any]:
         """降级结果"""

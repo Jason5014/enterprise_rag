@@ -192,12 +192,11 @@ class RAGPipeline:
             # Step 5: 答案生成
             self.logger.start_stage("generate")
 
-            # 获取对话历史上下文
+            # 获取对话历史上下文（user + assistant 完整轮次）
             history = None
-            if self.retrieval_config.enable_history:
-                history = [{"role": "user", "content": h} for h in
-                          [self.conversation_history.history[i]["content"]
-                           for i in range(0, len(self.conversation_history.history), 2)]]
+            if self.retrieval_config.enable_history and self.conversation_history.history:
+                max_turns = self.retrieval_config.max_history_turns
+                history = self.conversation_history.history[-(max_turns * 2):]
 
             answer = self.answer_generator.generate(
                 query=question,
@@ -249,6 +248,78 @@ class RAGPipeline:
                 "final_answer": "N/A",
                 "used_parent_chunks": []
             }
+
+    def stream_answer(self, question: str, history: Optional[List[Dict]] = None):
+        """流式问答：执行完整检索/重排后，逐 token yield 答案字符串。
+
+        Args:
+            question: 用户问题
+            history: 可选的对话历史列表 [{"role": ..., "content": ...}]
+
+        Yields:
+            str: 逐 token 的文本片段
+        """
+        # 检索阶段（同 answer_single_question，复用同一逻辑）
+        try:
+            if self.retrieval_config.enable_query_rewrite:
+                rewrite_result = self.query_rewriter.rewrite(
+                    question,
+                    history_context=self.conversation_history.get_context()
+                )
+                rewritten_query = rewrite_result["rewritten"]
+            else:
+                rewritten_query = question
+
+            if self.retrieval_config.enable_multiquery:
+                query_variants = self.multi_query.generate_variants(question)
+            else:
+                query_variants = [rewritten_query]
+
+            all_results = []
+            for variant in query_variants:
+                try:
+                    results = self.retriever.search(
+                        variant, top_k=self.retrieval_config.top_k_retrieval
+                    )
+                    all_results.extend(results)
+                except Exception as e:
+                    logger.error("检索失败 '%s': %s", variant, e)
+
+            merged = self._merge_search_results(all_results)
+
+            if self.retrieval_config.enable_rerank and merged:
+                import copy
+                context = self.reranker.rerank(
+                    question,
+                    copy.deepcopy(merged),
+                    top_k=self.retrieval_config.rerank_top_k,
+                )
+            else:
+                context = merged[:self.retrieval_config.rerank_top_k]
+
+        except Exception as e:
+            logger.error("检索阶段失败: %s", e)
+            yield f"检索失败: {e}"
+            return
+
+        # 拼装历史
+        hist = None
+        if self.retrieval_config.enable_history and self.conversation_history.history:
+            max_t = self.retrieval_config.max_history_turns
+            hist = self.conversation_history.history[-(max_t * 2):]
+        if history:
+            hist = history  # 外部传入优先
+
+        # 流式生成
+        full_answer = []
+        for token in self.answer_generator.stream_generate(question, context, history=hist):
+            full_answer.append(token)
+            yield token
+
+        # 更新对话历史
+        if self.retrieval_config.enable_history:
+            self.conversation_history.add("user", question)
+            self.conversation_history.add("assistant", "".join(full_answer))
 
     def _merge_search_results(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """合并多个搜索结果，按chunk_id去重并保留最高分"""

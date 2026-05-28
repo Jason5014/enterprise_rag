@@ -14,6 +14,7 @@ except ImportError:
     DASHSCOPE_AVAILABLE = False
 
 from config.retrieval_config import RetrievalConfig
+from src.utils import get_api_key
 
 
 class QueryType(Enum):
@@ -111,7 +112,7 @@ class QueryRouter:
             return {"type": QueryType.UNKNOWN, "confidence": 0.0, "reason": "LLM不可用"}
 
         try:
-            api_key = self._get_api_key()
+            api_key = get_api_key()
             logger.debug("QueryRouter 调用LLM分类: '%s'", query)
 
             response = Generation.call(
@@ -168,11 +169,3 @@ class QueryRouter:
 
         return result
 
-    def _get_api_key(self) -> str:
-        """获取API密钥"""
-        from dotenv import load_dotenv
-        load_dotenv()
-        api_key = os.getenv("DASHSCOPE_API_KEY", "")
-        if not api_key or api_key == "your_dashscope_api_key_here":
-            raise ValueError("请在.env设置DASHSCOPE_API_KEY")
-        return api_key

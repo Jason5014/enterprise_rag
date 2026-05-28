@@ -104,10 +104,41 @@ class HybridRetriever:
         return fused
 
     def _fuse_results(self, bm25_results: List[Dict], vector_results: List[Dict], top_k: int) -> List[Dict[str, Any]]:
-        """融合BM25和Vector结果"""
+        """融合BM25和Vector结果，根据配置选择 RRF 或加权融合"""
+        method = getattr(self.config, 'fusion_method', 'rrf')
+        if method == 'weighted':
+            return self._fuse_weighted(bm25_results, vector_results, top_k)
+        return self._fuse_rrf(bm25_results, vector_results, top_k)
+
+    def _fuse_rrf(self, bm25_results: List[Dict], vector_results: List[Dict], top_k: int) -> List[Dict[str, Any]]:
+        """Reciprocal Rank Fusion — 只依赖排名，跨索引分数可比"""
+        k = getattr(self.config, 'rrf_k', 60)
+        scores: Dict[str, Dict[str, Any]] = {}
+
+        for rank, r in enumerate(bm25_results):
+            cid = r["chunk_id"]
+            if cid not in scores:
+                scores[cid] = {**r, "bm25_score": 0.0, "vector_score": 0.0, "final_score": 0.0}
+            scores[cid]["bm25_score"] = 1 / (k + rank + 1)
+            scores[cid]["final_score"] += 1 / (k + rank + 1)
+
+        for rank, r in enumerate(vector_results):
+            cid = r["chunk_id"]
+            if cid not in scores:
+                scores[cid] = {**r, "bm25_score": 0.0, "vector_score": 0.0, "final_score": 0.0}
+            scores[cid]["vector_score"] = 1 / (k + rank + 1)
+            scores[cid]["final_score"] += 1 / (k + rank + 1)
+
+        sorted_results = sorted(scores.values(), key=lambda x: x["final_score"], reverse=True)[:top_k]
+        for i, r in enumerate(sorted_results):
+            r["rank"] = i + 1
+            r["score"] = r["final_score"]
+        return sorted_results
+
+    def _fuse_weighted(self, bm25_results: List[Dict], vector_results: List[Dict], top_k: int) -> List[Dict[str, Any]]:
+        """加权线性融合（归一化后加权）"""
         combined_scores: Dict[str, Dict[str, Any]] = {}
 
-        # 处理BM25结果
         max_bm25_score = max((r["score"] for r in bm25_results), default=1.0)
         for r in bm25_results:
             chunk_id = r["chunk_id"]
@@ -119,12 +150,10 @@ class HybridRetriever:
                 "final_score": self.bm25_weight * normalized_score
             }
 
-        # 处理Vector结果
         max_vector_score = max((r["score"] for r in vector_results), default=1.0)
         for r in vector_results:
             chunk_id = r["chunk_id"]
             normalized_score = r["score"] / max_vector_score if max_vector_score > 0 else 0
-
             if chunk_id in combined_scores:
                 combined_scores[chunk_id]["vector_score"] = normalized_score
                 combined_scores[chunk_id]["final_score"] = (
@@ -139,18 +168,10 @@ class HybridRetriever:
                     "final_score": self.vector_weight * normalized_score
                 }
 
-        # 排序
-        sorted_results = sorted(
-            combined_scores.values(),
-            key=lambda x: x["final_score"],
-            reverse=True
-        )[:top_k]
-
-        # 重新计算排名
+        sorted_results = sorted(combined_scores.values(), key=lambda x: x["final_score"], reverse=True)[:top_k]
         for i, r in enumerate(sorted_results):
             r["rank"] = i + 1
             r["score"] = r["final_score"]
-
         return sorted_results
 
     def _attach_parent_chunks(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

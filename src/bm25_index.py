@@ -127,13 +127,19 @@ class BM25Index:
             self.use_plus = data["use_plus"]
 
     def _tokenize(self, text: str) -> List[str]:
-        """简单分词"""
-        # 移除特殊字符，分割为单词
-        text = re.sub(r'[^\w\u4e00-\u9fff]', ' ', text)  # 保留中文和英文
-        text = text.lower()
-        tokens = text.split()
-        # 过滤太短的词
-        return [t for t in tokens if len(t) >= 2]
+        """中文分词：优先 jieba，降级到字符 bigram"""
+        text_lower = text.lower()
+        try:
+            import jieba
+            tokens = [t.strip() for t in jieba.cut(text_lower) if len(t.strip()) >= 2]
+            return [t for t in tokens if re.search(r'[\u4e00-\u9fff\w]', t)]
+        except ImportError:
+            # fallback：保留中英文字符，按空格分词 + 中文 bigram
+            clean = re.sub(r'[^\w\u4e00-\u9fff]', ' ', text_lower)
+            word_tokens = [t for t in clean.split() if len(t) >= 2]
+            chinese_only = re.sub(r'[^\u4e00-\u9fff]', '', clean)
+            bigrams = [chinese_only[i:i+2] for i in range(len(chinese_only) - 1)]
+            return word_tokens + bigrams
 
     def get_stats(self) -> Dict[str, Any]:
         """获取索引统计信息"""

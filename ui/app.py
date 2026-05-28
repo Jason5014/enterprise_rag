@@ -3,9 +3,12 @@ import streamlit as st
 import json
 import time
 import copy
+import logging
 from pathlib import Path
 from datetime import datetime
 import sys
+
+logger = logging.getLogger(__name__)
 
 # 添加项目根目录到路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -340,7 +343,7 @@ def get_pipeline(config_name: str) -> RAGPipeline:
     """获取或创建RAG管道"""
     if st.session_state.pipeline is None or st.session_state.current_config != config_name:
         preset = get_preset(config_name)
-        print(f"[DEBUG] 创建新Pipeline，配置: {config_name}")
+        logger.debug("创建新Pipeline，配置: %s", config_name)
 
         # 应用运行时配置覆盖（使用深拷贝避免污染全局 preset）
         overrides = st.session_state.config_overrides.get(config_name, {})
@@ -350,9 +353,9 @@ def get_pipeline(config_name: str) -> RAGPipeline:
                 setattr(retrieval_config, key, value)
 
         # 打印关键配置
-        print(f"[DEBUG] enable_multiquery: {retrieval_config.enable_multiquery}")
-        print(f"[DEBUG] enable_query_rewrite: {retrieval_config.enable_query_rewrite}")
-        print(f"[DEBUG] enable_rerank: {retrieval_config.enable_rerank}")
+        logger.debug("enable_multiquery: %s", retrieval_config.enable_multiquery)
+        logger.debug("enable_query_rewrite: %s", retrieval_config.enable_query_rewrite)
+        logger.debug("enable_rerank: %s", retrieval_config.enable_rerank)
 
         config_bundle = ConfigBundle(
             retrieval=retrieval_config,
@@ -535,23 +538,42 @@ def render_config_modal():
                 )
                 overrides["use_jina_reranker"] = use_jina
 
-        st.markdown("**⚖️ 检索权重**")
-        bm25_w = st.slider(
-            "关键词/语义权重",
-            value=overrides.get("bm25_weight", retrieval.bm25_weight),
-            min_value=0.0,
-            max_value=1.0,
-            step=0.1,
-            help="调节BM25和向量检索的权重"
+        st.markdown("**⚖️ 融合策略**")
+        fusion_method = st.radio(
+            "融合算法",
+            ["rrf", "weighted"],
+            index=0 if overrides.get("fusion_method", retrieval.fusion_method) == "rrf" else 1,
+            format_func=lambda x: "RRF（推荐，基于排名融合）" if x == "rrf" else "加权（基于分数融合）",
+            horizontal=True,
+            help="RRF 不受分数尺度影响，更稳定；加权可手动控制比例"
         )
-        overrides["bm25_weight"] = bm25_w
+        overrides["fusion_method"] = fusion_method
 
-        # 权重可视化
-        col_w1, col_w2 = st.columns(2)
-        with col_w1:
-            st.progress(bm25_w, text=f"关键词 {int(bm25_w*100)}%")
-        with col_w2:
-            st.progress(1-bm25_w, text=f"语义 {int((1-bm25_w)*100)}%")
+        if fusion_method == "weighted":
+            bm25_w = st.slider(
+                "关键词/语义权重",
+                value=overrides.get("bm25_weight", retrieval.bm25_weight),
+                min_value=0.0,
+                max_value=1.0,
+                step=0.1,
+                help="调节BM25和向量检索的权重"
+            )
+            overrides["bm25_weight"] = bm25_w
+            col_w1, col_w2 = st.columns(2)
+            with col_w1:
+                st.progress(bm25_w, text=f"关键词 {int(bm25_w*100)}%")
+            with col_w2:
+                st.progress(1-bm25_w, text=f"语义 {int((1-bm25_w)*100)}%")
+        else:
+            rrf_k = st.slider(
+                "RRF 平滑参数 k",
+                value=overrides.get("rrf_k", getattr(retrieval, 'rrf_k', 60)),
+                min_value=10,
+                max_value=200,
+                step=10,
+                help="k 越大，排名差异越平缓；默认 60"
+            )
+            overrides["rrf_k"] = rrf_k
 
         st.markdown("---")
 
@@ -559,14 +581,17 @@ def render_config_modal():
         with col_btn1:
             if st.button("✅ 保存", use_container_width=True, type="primary"):
                 st.session_state.pipeline = None
+                st.session_state.config_edit_mode = False
                 st.rerun()
         with col_btn2:
             if st.button("🔄 恢复预设", use_container_width=True):
                 st.session_state.config_overrides[st.session_state.current_config] = {}
                 st.session_state.pipeline = None
+                st.session_state.config_edit_mode = False
                 st.rerun()
         with col_btn3:
             if st.button("❌ 关闭", use_container_width=True):
+                st.session_state.config_edit_mode = False
                 st.rerun()
 
     config_dialog()
@@ -645,100 +670,81 @@ def render_sidebar():
             st.rerun()
 
         st.markdown("---")
-        st.markdown("### 🔄 系统操作")
-        if st.button("🔄 重新加载 Pipeline", use_container_width=True, help="修改 .env 或配置后点击重新加载", key="reload_pipeline_btn"):
-            st.session_state.pipeline = None
-            # 强制重新加载环境变量
-            from dotenv import load_dotenv
-            load_dotenv(override=True)
-            st.rerun()
 
-        st.markdown("---")
-        st.markdown("### 📈 当前配置")
-
-        # 配置编辑弹窗
-        if st.button("📝 编辑参数", use_container_width=True, key="edit_config_btn"):
-            st.session_state.config_edit_mode = True
+        # 配置操作：编辑 + 重载合并到一行
+        col_edit, col_reload = st.columns(2)
+        with col_edit:
+            if st.button("📝 编辑配置", use_container_width=True, key="edit_config_btn"):
+                st.session_state.config_edit_mode = True
+        with col_reload:
+            if st.button("🔄 重载", use_container_width=True, help="修改 .env 或配置后点击重新加载", key="reload_pipeline_btn"):
+                st.session_state.pipeline = None
+                from dotenv import load_dotenv
+                load_dotenv(override=True)
+                st.rerun()
 
         if st.session_state.get("config_edit_mode", False):
             render_config_modal()
 
-        # 显示当前配置详情（更完整的友好展示）
+        # 当前配置快照（默认折叠，不挤占侧边栏）
         preset = get_preset(st.session_state.current_config)
         retrieval = preset.retrieval
 
-        # 初始化当前配置的覆盖值
         if st.session_state.current_config not in st.session_state.config_overrides:
             st.session_state.config_overrides[st.session_state.current_config] = {}
 
         overrides = st.session_state.config_overrides[st.session_state.current_config]
-
-        # 应用覆盖值显示
         field_names = {f.name for f in retrieval.__dataclass_fields__.values()}
-        display_data = {
-            k: overrides.get(k, getattr(retrieval, k))
-            for k in field_names
-        }
+        display_data = {k: overrides.get(k, getattr(retrieval, k)) for k in field_names}
         display_retrieval = type(retrieval)(**display_data)
 
-        # 构建更完整的配置展示
-        st.markdown("#### 📋 当前配置")
-
-        # 使用expander展示完整配置
-        with st.expander("查看详细配置", expanded=True):
-            # 基本参数
-            st.markdown("**🔢 检索参数**")
+        with st.expander("📋 当前配置", expanded=False):
             col_p1, col_p2 = st.columns(2)
             with col_p1:
-                st.metric("文本块大小", f"{display_retrieval.chunk_size}字符")
+                st.caption(f"块大小: **{display_retrieval.chunk_size}**字符")
+                st.caption(f"召回: **{display_retrieval.top_k_retrieval}**条")
             with col_p2:
-                st.metric("召回数量", f"{display_retrieval.top_k_retrieval}条")
-
-            # 高级参数
-            if display_retrieval.enable_rerank:
-                st.metric("精排数量", f"{display_retrieval.rerank_top_k}条")
-
-            st.progress(float(display_retrieval.bm25_weight), text=f"关键词权重 {display_retrieval.bm25_weight:.0%} | 语义权重 {1-display_retrieval.bm25_weight:.0%}")
-
-            st.markdown("---")
-
-            # 功能开关状态
-            st.markdown("**⚡ 功能开关**")
+                if display_retrieval.enable_rerank:
+                    st.caption(f"精排: **{display_retrieval.rerank_top_k}**条")
+                fusion = getattr(display_retrieval, 'fusion_method', 'rrf')
+                if fusion == 'weighted':
+                    st.caption(f"融合: 加权 BM25={display_retrieval.bm25_weight:.0%}")
+                else:
+                    st.caption(f"融合: RRF k={getattr(display_retrieval, 'rrf_k', 60)}")
 
             all_features = [
-                ("enable_parent_retrieval", "📎 父子块检索", "检索时关联父级大块"),
-                ("enable_history", "💬 对话记忆", "支持多轮对话"),
-                ("enable_multiquery", "🔄 多-query扩展", "改写为多个相似问法"),
-                ("enable_query_rewrite", "✏️ 智能改写", "口语转检索友好型"),
-                ("enable_rerank", "🗳️ LLM重排序", "二次精排提高相关性"),
+                ("enable_parent_retrieval", "父子块"),
+                ("enable_history", "对话"),
+                ("enable_multiquery", "扩展"),
+                ("enable_query_rewrite", "改写"),
+                ("enable_rerank", "重排"),
             ]
-
-            for key, label, desc in all_features:
-                value = getattr(display_retrieval, key, False)
-                status = "✅" if value else "⭕"
-                st.markdown(f"{status} **{label}** - {desc if value else '未开启'}")
+            badges = "  ".join(
+                f"{'✅' if getattr(display_retrieval, k, False) else '⭕'} {label}"
+                for k, label in all_features
+            )
+            st.caption(badges)
 
         st.markdown("---")
-        st.markdown("### 🔧 操作")
-
-        if st.button("📚 重新索引", use_container_width=True):
-            st.info("请在终端运行: python main.py process-reports")
 
         if st.button("🗑️ 清空对话", use_container_width=True):
             st.session_state.history = []
             st.rerun()
 
-        st.markdown("---")
-        st.markdown("### ℹ️ 关于")
-        st.caption("基于 RAG Challenge 获奖方案\n支持 PDF 知识库问答")
+        if st.button("📚 重新索引", use_container_width=True, help="需在终端运行 process-reports"):
+            st.info("请在终端运行: python main.py process-reports")
+
+        st.caption("企业RAG知识库 v0.1.0")
 
 
 def render_answer(answer: dict):
     """渲染答案详情"""
-    # 最终答案 - 最重要，放最前面
     final_answer = answer.get("final_answer", "N/A")
     st.markdown("#### ✅ 最终答案")
-    st.success(f"**{final_answer}**")
+    if final_answer and final_answer != "N/A":
+        st.success(f"**{final_answer}**")
+    else:
+        st.warning("未能从知识库中找到相关答案。请尝试换一种问法或检查索引是否已构建。")
 
     # 推理过程
     analysis = answer.get("step_by_step_analysis", "")
@@ -769,32 +775,41 @@ def render_retrieval_visualization(log: dict):
             name = detail.get("name", "")
             detail_map[name] = detail.get("data", {})
 
-    # 检索流程横条
-    cols = st.columns(len(stages) + 1)
-    for i, stage in enumerate(stages):
-        with cols[i]:
-            if isinstance(stage, str):
-                name = stage
-            else:
-                name = stage.get("name", "")
-            duration = latency.get(name, 0)
-            st.markdown(f"""
-            <div style="text-align: center; background: white; border-radius: 8px; padding: 12px 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                <div style="font-size: 1.5rem;">{get_stage_icon(name)}</div>
-                <div style="color: #333; font-weight: bold; font-size: 0.85rem; margin-top: 3px;">{name}</div>
-                <div style="color: #666; font-size: 0.75rem;">{duration:.0f}ms</div>
+    # 检索流程横条：交替 [阶段列, 箭头列, ...] 结构确保箭头在阶段之间
+    if stages:
+        col_widths = []
+        for i in range(len(stages)):
+            col_widths.append(3)
+            if i < len(stages) - 1:
+                col_widths.append(1)
+        col_widths.append(3)
+        cols = st.columns(col_widths)
+
+        for i, stage in enumerate(stages):
+            stage_col_idx = i * 2
+            with cols[stage_col_idx]:
+                if isinstance(stage, str):
+                    name = stage
+                else:
+                    name = stage.get("name", "")
+                duration = latency.get(name, 0)
+                st.markdown(f"""
+                <div style="text-align: center; background: white; border-radius: 8px; padding: 12px 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <div style="font-size: 1.5rem;">{get_stage_icon(name)}</div>
+                    <div style="color: #333; font-weight: bold; font-size: 0.85rem; margin-top: 3px;">{name}</div>
+                    <div style="color: #666; font-size: 0.75rem;">{duration:.0f}ms</div>
+                </div>
+                """, unsafe_allow_html=True)
+            if i < len(stages) - 1:
+                with cols[stage_col_idx + 1]:
+                    st.markdown("<div style='text-align: center; line-height: 4rem; font-size: 1.2rem; color: #667eea;'>→</div>", unsafe_allow_html=True)
+        with cols[-1]:
+            st.markdown("""
+            <div style="text-align: center; background: #e8f5e9; border-radius: 8px; padding: 12px 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                <div style="font-size: 1.5rem;">✅</div>
+                <div style="color: #333; font-weight: bold; font-size: 0.85rem;">完成</div>
             </div>
             """, unsafe_allow_html=True)
-        if i < len(stages) - 1:
-            with cols[i]:
-                st.markdown("<div style='text-align: center; font-size: 1.2rem; color: #667eea;'>→</div>", unsafe_allow_html=True)
-    with cols[-1]:
-        st.markdown("""
-        <div style="text-align: center; background: #e8f5e9; border-radius: 8px; padding: 12px 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-            <div style="font-size: 1.5rem;">✅</div>
-            <div style="color: #333; font-weight: bold; font-size: 0.85rem;">完成</div>
-        </div>
-        """, unsafe_allow_html=True)
 
     st.markdown("---")
 
@@ -1042,33 +1057,13 @@ def render_qa_page():
 
             st.markdown("---")
 
-    st.markdown("### 💭 提问")
-    user_input = st.text_area(
-        "输入您的问题",
-        placeholder="例如：中芯国际2024年营收是多少？",
-        height=100,
-        key="user_input"
-    )
+    st.caption(f"当前配置: {st.session_state.current_config} | 企业RAG知识库 v0.1.0")
 
-    col1, col2 = st.columns([1, 5])
-    with col1:
-        submit_btn = st.button("🚀 发送", type="primary", use_container_width=True)
-    with col2:
-        clear_btn = st.button("🗑️ 清空", use_container_width=True)
-
-    if clear_btn:
-        st.session_state.history = []
-        st.rerun()
-
-    if submit_btn and user_input.strip():
+    user_input = st.chat_input("输入您的问题，例如：中芯国际2024年营收是多少？")
+    if user_input and user_input.strip():
         with st.spinner("思考中..."):
             try:
-                print(f"[DEBUG] 当前配置: {st.session_state.current_config}")
-                print(f"[DEBUG] Pipeline缓存状态: {st.session_state.pipeline is not None}")
                 pipeline = get_pipeline(st.session_state.current_config)
-                print(f"[DEBUG] Pipeline配置 - enable_query_rewrite: {pipeline.retrieval_config.enable_query_rewrite}")
-                print(f"[DEBUG] Pipeline配置 - enable_multiquery: {pipeline.retrieval_config.enable_multiquery}")
-                print(f"[DEBUG] Pipeline配置 - enable_rerank: {pipeline.retrieval_config.enable_rerank}")
                 start_time = time.time()
                 result = pipeline.answer_single_question(user_input)
                 elapsed = time.time() - start_time
@@ -1086,9 +1081,6 @@ def render_qa_page():
                 st.error(f"处理失败: {str(e)}")
                 import traceback
                 st.code(traceback.format_exc())
-
-    st.markdown("---")
-    st.caption(f"当前配置: {st.session_state.current_config} | 企业RAG知识库 v0.1.0")
 
 
 def render_eval_page():
@@ -1328,7 +1320,7 @@ def render_eval_page():
                     cat_m[cat]["relevance"] = []
                     cat_m[cat]["completeness"] = []
 
-            print(f"  Q: {q[:40]} | results={len(results)} | retrieved={len(retrieved_ids)} | relevant={len(relevant)}", file=sys.stderr)
+            logger.debug("Q: %s | results=%d | retrieved=%d | relevant=%d", q[:40], len(results), len(retrieved_ids), len(relevant))
 
             q_result = {
                 "query": q,
@@ -1400,11 +1392,11 @@ def render_eval_page():
             cat_avg_m[cat] = {name: sum(v) / len(v) if v else 0.0 for name, v in scores.items()}
             cat_avg_m[cat]["count"] = len(cat_m[cat]["relevance"]) if enable_llm_eval else len(cat_m[cat].get("recall@5", []))
 
-        print(f"\n=== 评估开始 ({config_name}) ===", file=sys.stderr)
-        print(f"问题数: {len(questions)}, ground_truth: {len(ground_truth)}", file=sys.stderr)
+        logger.info("=== 评估开始 (%s) ===", config_name)
+        logger.info("问题数: %d, ground_truth: %d", len(questions), len(ground_truth))
         for i, qr in enumerate(q_results):
-            print(f"Q{i+1}: {qr['query'][:30]} | hit={qr.get('is_hit')} | top1={qr.get('top1')} | count={qr.get('result_count')}", file=sys.stderr)
-        print(f"=== 评估结束 | Recall@5={avg_m.get('recall@5',0):.2%} MRR={avg_m.get('mrr',0):.2%} ===\n", file=sys.stderr)
+            logger.debug("Q%d: %s | hit=%s | top1=%s | count=%s", i+1, qr['query'][:30], qr.get('is_hit'), qr.get('top1'), qr.get('result_count'))
+        logger.info("=== 评估结束 | Recall@5=%.2f%% MRR=%.2f%% ===", avg_m.get('recall@5', 0)*100, avg_m.get('mrr', 0)*100)
 
         return {
             "config": config_name,
@@ -1440,7 +1432,7 @@ def render_eval_page():
             else:
                 configs_to_run = [(st.session_state.current_config, st.session_state.current_config, {})]
 
-            print(f"\n评估 {len(configs_to_run)} 个配置...", file=sys.stderr)
+            logger.info("评估 %d 个配置...", len(configs_to_run))
             try:
                 all_results = []
                 total_configs = len(configs_to_run)
@@ -1805,110 +1797,6 @@ def render_eval_page():
 
         if questions:
             st.markdown("**当前问题列表：**")
-            for i, q in enumerate(questions):
-                st.markdown(f"  {i+1}. {q}")
-
-    st.markdown("---")
-
-    # 显示评估结果（单配置模式才渲染详情，多配置模式已在上方渲染对比表格）
-    if st.session_state.get("eval_results") and eval_mode not in ("多配置对比", "自定义变体对比"):
-        # 统一处理：可能是 list（按钮评估）或 dict（旧版 inline 评估）
-        raw_results = st.session_state.eval_results
-        if isinstance(raw_results, list):
-            results_list = raw_results
-        else:
-            results_list = [raw_results]
-
-        # 取第一个配置的结果用于主显示
-        results = results_list[0]
-        metrics = results.get("metrics", {})
-
-        st.markdown("### 📈 评估指标")
-
-        if results.get("ground_truth_available"):
-            m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
-            _render_metric_card(m1, "hit@1", metrics.get('hit@1', 0))
-            _render_metric_card(m2, "hit@3", metrics.get('hit@3', 0))
-            _render_metric_card(m3, "hit@5", metrics.get('hit@5', 0))
-            _render_metric_card(m4, "recall@5", metrics.get('recall@5', 0))
-            _render_metric_card(m5, "mrr", metrics.get('mrr', 0))
-            _render_metric_card(m6, "ndcg@5", metrics.get('ndcg@5', 0))
-            with m7:
-                latency = results['avg_latency_ms']
-                lat_color = "green" if latency < 500 else "orange" if latency < 1500 else "red"
-                st.metric("平均延迟", f"{latency:.0f}ms", help="检索+生成总延迟。目标 < 500ms（优秀），< 1500ms（良好）")
-                st.caption(f"{'🟢' if lat_color == 'green' else '🟡' if lat_color == 'orange' else '🔴'} {'优秀' if lat_color == 'green' else '良好' if lat_color == 'orange' else '偏慢'}")
-
-            # 检索指标分析
-            for mk in ["recall@1", "recall@5", "mrr", "ndcg@5"]:
-                _render_metric_analysis(mk, metrics.get(mk, 0))
-        else:
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                st.metric("平均延迟", f"{results['avg_latency_ms']:.1f}ms")
-            with c2:
-                st.metric("最慢", f"{results['max_latency_ms']:.1f}ms")
-            with c3:
-                st.metric("最快", f"{results['min_latency_ms']:.1f}ms")
-            st.info("💡 提示: 完善 data/eval_questions.json 中的 ground_truth 可计算 Recall@K 等指标")
-
-        st.markdown("### 🔍 检索详情")
-
-        for i, r in enumerate(results["query_results"]):
-            with st.expander(f"**Q{i+1}:** {r['query'][:50]}...", expanded=i < 3):
-                col_lat, col_top1 = st.columns([1, 3])
-                with col_lat:
-                    st.markdown(f"**延迟:** {r['latency_ms']:.1f}ms")
-                with col_top1:
-                    st.markdown(f"**Top-1:** `{r['retrieved_ids'][0] if r['retrieved_ids'] else 'N/A'}`")
-
-                # 预期 chunk
-                query_text = r['query']
-                expected_chunks = ground_truth.get(query_text, {}).get("relevant_chunks", [])
-                if expected_chunks:
-                    st.markdown(f"**📌 预期 chunk ({len(expected_chunks)}个):**")
-                    for ec in expected_chunks:
-                        st.markdown(f"  ✅ `{ec}`")
-
-                # Top-10 检索结果（匹配的高亮）
-                retrieved = r['retrieved_ids'][:10]
-                expected_set = set(expected_chunks)
-                hit_in_top10 = set(retrieved) & expected_set
-                miss_in_top10 = expected_set - set(retrieved)
-
-                st.markdown(f"**🔍 Top-10 检索结果** (命中 {len(hit_in_top10)}/{len(expected_chunks)}):")
-                for j, rid in enumerate(retrieved):
-                    rank_marker = "🥇" if j == 0 else "🥈" if j == 1 else "🥉" if j == 2 else f"  {j+1}."
-                    if rid in expected_set:
-                        st.markdown(f"  {rank_marker} 🟢 `{rid}` — **命中预期**")
-                    else:
-                        st.markdown(f"  {rank_marker} ⚪ `{rid}`")
-
-                # 未命中的预期 chunk
-                if miss_in_top10:
-                    st.markdown(f"**❌ 未进入 Top-10 的预期 chunk ({len(miss_in_top10)}个):**")
-                    for mid in miss_in_top10:
-                        st.markdown(f"  ❌ `{mid}`")
-    else:
-        # 无结果时显示说明
-        st.info("👆 点击上方「开始评估」按钮运行测试")
-        st.markdown("""
-        **评估指标说明：**
-
-        | 指标 | 说明 | 优秀标准 |
-        |------|------|---------|
-        | **Recall@K** | Top-K结果中命中的比例 | ≥ 80% |
-        | **MRR** | 首个相关结果排位的倒数均值 | ≥ 0.6 |
-        | **NDCG@5** | 归一化折损累计增益 | ≥ 0.6 |
-        | **延迟** | 检索耗时，越低越好 | < 500ms |
-
-        **如何完善 ground_truth：**
-        1. 运行一次评估，获取各问题的检索结果
-        2. 打开 `data/chunked/chunks.json` 找到相关 chunk 的 ID
-        3. 在 `data/eval_questions.json` 的 `ground_truth` 字段中填入
-        """)
-        if questions:
-            st.markdown(f"\n**当前问题列表：**")
             for i, q in enumerate(questions):
                 st.markdown(f"  {i+1}. {q}")
 

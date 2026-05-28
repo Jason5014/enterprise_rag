@@ -3,6 +3,62 @@
 ## 项目概述
 这是一个企业RAG知识库系统，用于处理中芯国际等企业的PDF年报、季报、研报等文档，实现智能问答。
 
+---
+
+## 快速启动
+
+### 1. 配置环境变量
+```bash
+cp .env.example .env      # 复制模板
+# 编辑 .env，至少填写 DASHSCOPE_API_KEY
+```
+
+### 2. 安装依赖（首次）
+```bash
+make install              # 同时安装 Python 依赖 + Node.js 依赖
+# 或分开安装：
+make install-python       # pip install -r requirements.txt
+make install-node         # cd frontend && npm install
+```
+
+### 3. 启动服务（两个终端）
+
+**终端 1 — 后端（FastAPI :8000）**
+```bash
+make backend
+# 等价于：python -m uvicorn backend.main:app --reload --port 8000
+```
+
+**终端 2 — 前端（Vue3 dev server :5173）**
+```bash
+make frontend
+# 等价于：cd frontend && npm run dev
+```
+
+访问 http://localhost:5173，默认账号 `admin / admin123`。
+
+> **如果装有 tmux**，可以用 `make dev` 一键在两个窗口中并行启动。
+
+### 4. 其他常用命令
+| 命令 | 作用 |
+|------|------|
+| `make build` | 生产构建前端（输出 `frontend/dist/`） |
+| `make test` | 后端单元测试（`pytest tests/`） |
+| `make lint` | 前端 TypeScript 类型检查 |
+| `make clean` | 清理构建产物和 `__pycache__` |
+| `make help` | 查看所有命令 |
+
+### 5. 自定义端口
+```bash
+make backend  BACKEND_PORT=9000
+make frontend FRONTEND_PORT=3000
+```
+
+### 6. API 文档
+后端启动后访问 http://localhost:8000/docs（Swagger UI）。
+
+---
+
 ## 关键原则
 
 ### 1. 禁止硬编码 - Query分类纯LLM实现，响应解析从YAML读取标记
