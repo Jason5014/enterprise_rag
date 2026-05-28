@@ -81,7 +81,7 @@ def feedback(body: FeedbackRequest, user=Depends(get_current_user)):
         ROOT = Path(__file__).parent.parent.parent.parent
         if str(ROOT) not in sys.path:
             sys.path.insert(0, str(ROOT))
-        from src.feedback_collector import FeedbackCollector
+        from src.eval.feedback_collector import FeedbackCollector
         collector = FeedbackCollector()
         collector.add(
             query=body.query,

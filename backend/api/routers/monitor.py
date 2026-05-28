@@ -19,7 +19,7 @@ router = APIRouter()
 
 
 def _get_collector():
-    from src.feedback_collector import FeedbackCollector
+    from src.eval.feedback_collector import FeedbackCollector
     return FeedbackCollector()
 
 

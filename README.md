@@ -117,6 +117,11 @@ enterprise_rag/
 │   │   ├── base.py             抽象接口（FileStorage / MetadataStore）
 │   │   ├── local_file.py       LocalFileStorage 实现
 │   │   └── sqlite_meta.py      SQLiteMetadataStore 实现
+│   ├── eval/                   评估 & 监控模块
+│   │   ├── evaluator.py        检索评估（Hit@K / Recall / MRR / NDCG）
+│   │   ├── eval_history.py     评估历史记录（JSONL）
+│   │   ├── feedback_collector.py  用户反馈收集（👍/👎）
+│   │   └── optimizer.py        RAG 参数优化建议
 │   ├── kb_manager.py           知识库管理（协调存储 + pipeline）
 │   ├── pipeline.py             RAG 主流程（含 stream_answer）
 │   ├── answer_generator.py     答案生成（含 stream_generate）
@@ -129,13 +134,24 @@ enterprise_rag/
 │   ├── presets.py              base / fast / precision / full
 │   └── retrieval_config.py     检索参数（index_dir / fusion_method / ...）
 │
+├── scripts/                    工具脚本（手动运行）
+│   ├── eval_llm_judge.py       LLM-as-Judge 批量评估
+│   └── test_dashscope.py       DashScope API 连通性测试
+│
+├── docs/                       设计文档
+│   ├── 项目规划文档.md           项目功能规划与任务列表
+│   ├── optimization_guide.md   RAG 优化指南
+│   └── rag_metrics.md          评估指标说明
+│
 ├── data/                       数据目录（git 忽略大文件）
 │   ├── kb.db                   SQLite 元数据（git 忽略）
 │   ├── kb/{kb_id}/             各知识库数据（git 忽略）
 │   ├── eval_results/           评测历史（保留）
 │   └── feedback/               用户反馈（保留）
 │
-├── ui/                         Streamlit UI（过渡期保留）
+├── tests/                      单元测试
+├── ui/                         Streamlit UI（过渡期保留，将废弃）
+├── main.py                     CLI 入口（process-reports / query / ui）
 ├── .env.example                环境变量模板
 ├── Makefile                    一键启动 / 构建 / 测试
 ├── requirements.txt            Python 依赖

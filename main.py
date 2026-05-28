@@ -458,7 +458,7 @@ def evaluate(config, questions):
     """运行评估 - 测试RAG系统效果"""
     import json
     from src.pipeline import RAGPipeline
-    from src.evaluator import RetrievalEvaluator
+    from src.eval.evaluator import RetrievalEvaluator
 
     click.echo("=" * 60)
     click.echo("📊 企业RAG知识库 - 评估测试")

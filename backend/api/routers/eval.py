@@ -32,8 +32,8 @@ def run_eval(
 ):
     """SSE 流式运行评估，实时推送进度"""
     from config.presets import get_preset
-    from src.evaluator import Evaluator
-    from src.eval_history import EvalHistory
+    from src.eval.evaluator import Evaluator
+    from src.eval.eval_history import EvalHistory
     from src.pipeline import RAGPipeline
     import uuid
 
@@ -85,7 +85,7 @@ def run_eval(
 @router.get("/history")
 def eval_history(limit: int = Query(20), user=Depends(get_current_user)):
     """返回历史评估记录列表"""
-    from src.eval_history import EvalHistory
+    from src.eval.eval_history import EvalHistory
     history = EvalHistory()
     records = history.list_records(limit=limit)
     return records

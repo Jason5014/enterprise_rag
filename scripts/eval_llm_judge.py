@@ -7,13 +7,13 @@ from datetime import datetime
 from collections import defaultdict
 
 # 添加项目根目录到路径
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config import get_preset
 from config.settings import ConfigBundle
 from config.eval_config import EvalConfig
 from src.pipeline import RAGPipeline
-from src.evaluator import LLMJudgeEvaluator
+from src.eval.evaluator import LLMJudgeEvaluator
 
 
 def load_questions(questions_path: str = "data/eval_questions.json"):

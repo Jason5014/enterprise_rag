@@ -23,7 +23,7 @@ from config.retrieval_config import RetrievalConfig
 from config.answer_config import AnswerConfig
 from config.eval_config import EvalConfig
 from src.pipeline import RAGPipeline
-from src.evaluator import RetrievalEvaluator, LLMJudgeEvaluator
+from src.eval.evaluator import RetrievalEvaluator, LLMJudgeEvaluator
 from config.logging_config import LogConfig
 from src.logging_setup import init_logging
 
@@ -388,14 +388,14 @@ def _load_eval_questions():
 @st.cache_resource
 def get_eval_history():
     """获取评测历史管理器（缓存，避免每次rerun重读JSONL）"""
-    from src.eval_history import EvalHistory
+    from src.eval.eval_history import EvalHistory
     return EvalHistory()
 
 
 @st.cache_resource
 def get_feedback_collector():
     """获取反馈收集器（缓存，避免每次rerun重读JSONL）"""
-    from src.feedback_collector import FeedbackCollector
+    from src.eval.feedback_collector import FeedbackCollector
     return FeedbackCollector()
 
 
