@@ -1,0 +1,21 @@
+# 响应解析配置
+response_parsing:
+  analysis_markers:
+    - "推理"
+    - "分析"
+    - "步骤"
+    - "1."
+    - "2."
+    - "###"
+
+  answer_markers:
+    - "答案"
+    - "最终"
+    - "结论"
+    - "列表"
+    - "理由"
+
+  stop_markers:
+    - "###"
+    - "---"
+    - "```"

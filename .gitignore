@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+
+# Data (large files)
+data/pdf_reports/
+data/parsed/
+data/chunked/
+data/vector_db/
+data/bm25/
+data/logs/
+
+# Keep eval results and feedback (small, important)
+!data/eval_results/
+!data/feedback/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Pytest
+.pytest_cache/
