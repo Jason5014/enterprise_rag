@@ -40,6 +40,7 @@ class KBRecord:
     created_at: str
     updated_at: str
     owner_id: Optional[str] = None
+    index_dir: Optional[str] = None  # 覆盖默认索引路径，内置/迁移 KB 使用
 
 
 @dataclass

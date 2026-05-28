@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS knowledge_bases (
     chunk_count INTEGER DEFAULT 0,
     owner_id    TEXT REFERENCES users(user_id),
     created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
+    updated_at  TEXT NOT NULL,
+    index_dir   TEXT                           -- 覆盖默认索引路径（内置/迁移 KB）
 );
 
 CREATE TABLE IF NOT EXISTS documents (
@@ -78,6 +79,11 @@ class SQLiteMetadataStore(MetadataStore):
     def _init_db(self):
         with self._conn() as conn:
             conn.executescript(_SCHEMA)
+            # 兼容迁移：给已有数据库追加 index_dir 列（新建库由 _SCHEMA 直接创建）
+            try:
+                conn.execute("ALTER TABLE knowledge_bases ADD COLUMN index_dir TEXT")
+            except Exception:
+                pass  # 列已存在，忽略
 
     @contextmanager
     def _conn(self):
@@ -135,15 +141,20 @@ class SQLiteMetadataStore(MetadataStore):
     # --- Knowledge Bases ---
 
     def create_kb(self, name: str, description: str, config_name: str,
-                  owner_id: Optional[str] = None) -> str:
-        kid = _uid()
+                  owner_id: Optional[str] = None,
+                  kb_id: Optional[str] = None,
+                  status: str = "empty",
+                  index_dir: Optional[str] = None) -> str:
+        kid = kb_id or _uid()
         now = _now()
         with self._conn() as conn:
             conn.execute(
                 "INSERT INTO knowledge_bases"
-                "(kb_id,name,description,config_name,status,doc_count,chunk_count,owner_id,created_at,updated_at)"
-                " VALUES(?,?,?,?,?,?,?,?,?,?)",
-                (kid, name, description, config_name, "empty", 0, 0, owner_id, now, now),
+                "(kb_id,name,description,config_name,status,doc_count,chunk_count,"
+                " owner_id,created_at,updated_at,index_dir)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (kid, name, description, config_name, status, 0, 0,
+                 owner_id, now, now, index_dir),
             )
         return kid
 
@@ -182,6 +193,7 @@ class SQLiteMetadataStore(MetadataStore):
 
     @staticmethod
     def _row_to_kb(row) -> KBRecord:
+        keys = row.keys()
         return KBRecord(
             kb_id=row["kb_id"],
             name=row["name"],
@@ -193,6 +205,7 @@ class SQLiteMetadataStore(MetadataStore):
             owner_id=row["owner_id"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            index_dir=row["index_dir"] if "index_dir" in keys else None,
         )
 
     # --- Documents ---

@@ -345,6 +345,41 @@ def process_reports(config, input_dir, output_dir):
     click.echo("\n报告处理完成！")
     click.echo(f"输出目录: {output_dir}")
 
+    # --- 同步注册 / 更新内置 KB 到元数据库 ---
+    # 这样下次启动后端时，UI 能直接看到并使用这个知识库，无需手动操作
+    try:
+        from src.storage.sqlite_meta import SQLiteMetadataStore
+        from pathlib import Path as _Path
+        db_path = str(_Path("data/kb.db"))
+        store = SQLiteMetadataStore(db_path)
+        _BUILTIN_ID = "builtin-default"
+        chunk_count = len(all_chunks)
+        raw_dir = _Path("data/pdf_reports")
+        doc_count = len(list(raw_dir.glob("*.pdf"))) if raw_dir.exists() else 0
+
+        if store.get_kb(_BUILTIN_ID) is None:
+            store.create_kb(
+                kb_id=_BUILTIN_ID,
+                name="内置知识库（中芯国际研报）",
+                description="由 data/pdf_reports/ 目录中的研报自动构建",
+                config_name=config,
+                status="ready",
+                index_dir=str(_Path(output_dir).resolve()),
+            )
+            store.update_kb(_BUILTIN_ID, doc_count=doc_count, chunk_count=chunk_count)
+            click.echo(f"\n✓ 已注册内置 KB（{doc_count} 文件 / {chunk_count} chunks）到元数据库")
+            click.echo("  启动后端后，可在知识库管理界面直接使用此知识库。")
+        else:
+            store.update_kb(_BUILTIN_ID,
+                            status="ready",
+                            doc_count=doc_count,
+                            chunk_count=chunk_count,
+                            index_dir=str(_Path(output_dir).resolve()),
+                            config_name=config)
+            click.echo(f"\n✓ 已更新内置 KB（{chunk_count} chunks）到元数据库")
+    except Exception as _e:
+        click.echo(f"\n（元数据库写入跳过: {_e}）", err=True)
+
 
 @cli.command()
 @click.option("--config", "-c", default="base", help="配置名称")

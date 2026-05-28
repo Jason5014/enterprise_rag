@@ -36,6 +36,7 @@ def get_metadata_store() -> SQLiteMetadataStore:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     store = SQLiteMetadataStore(DB_PATH)
     _ensure_admin(store)
+    _ensure_builtin_kb(store)
     return store
 
 
@@ -53,6 +54,48 @@ def _ensure_admin(store: SQLiteMetadataStore) -> None:
             password_hash=hash_password(ADMIN_PASSWORD),
             role="admin",
         )
+
+
+# 内置 KB 的固定 ID（与 data/chunked/ 对应）
+BUILTIN_KB_ID = "builtin-default"
+
+
+def _ensure_builtin_kb(store: SQLiteMetadataStore) -> None:
+    """首次启动时，若 data/chunked/ 有已构建的索引，自动注册为内置知识库。
+    这样用户无需跑 process-reports CLI，直接在 UI 里就能看到并使用它。
+    """
+    if store.get_kb(BUILTIN_KB_ID) is not None:
+        return  # 已注册，跳过
+
+    builtin_chunked = ROOT / "data" / "chunked"
+    if not (builtin_chunked / "chunks.json").exists():
+        return  # 索引还不存在，跳过（等用户跑完 process-reports 再注册）
+
+    # 统计 chunk 数量
+    import json as _json
+    try:
+        data = _json.loads((builtin_chunked / "chunks.json").read_text(encoding="utf-8"))
+        chunk_count = len(data.get("chunks", []))
+    except Exception:
+        chunk_count = 0
+
+    # 统计 PDF 数量
+    raw_dir = ROOT / "data" / "pdf_reports"
+    doc_count = len(list(raw_dir.glob("*.pdf"))) if raw_dir.exists() else 0
+
+    store.create_kb(
+        kb_id=BUILTIN_KB_ID,
+        name="内置知识库（中芯国际研报）",
+        description="由 data/pdf_reports/ 目录中的研报自动构建，使用 data/chunked/ 索引",
+        config_name="base",
+        status="ready",
+        index_dir=str(builtin_chunked),
+    )
+    store.update_kb(BUILTIN_KB_ID, doc_count=doc_count, chunk_count=chunk_count)
+    import logging as _logging
+    _logging.getLogger(__name__).info(
+        "已自动注册内置 KB: %d 文件 / %d chunks", doc_count, chunk_count
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -305,7 +305,14 @@ class KBManager:
         config = get_preset(kb.config_name)
         # 深拷贝避免修改共享预设
         rc = copy.deepcopy(config.retrieval) if config.retrieval else RetrievalConfig()
-        rc.index_dir = str(self.fs.get_dir_path(kb_id, "chunked"))
+
+        # 优先使用 KB 记录中的自定义 index_dir（内置 KB / 迁移场景）
+        # 否则使用标准路径 data/kb/{kb_id}/chunked/
+        if kb.index_dir:
+            rc.index_dir = kb.index_dir
+        else:
+            rc.index_dir = str(self.fs.get_dir_path(kb_id, "chunked"))
+
         config.retrieval = rc
 
         pipeline = RAGPipeline(config)
