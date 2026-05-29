@@ -139,22 +139,22 @@ import { Delete, Promotion, ChatDotRound, Document, CircleCheck, CircleClose } f
 import { kbApi } from '@/api/kb'
 import { qaApi } from '@/api/qa'
 import { useQAStore, type Message } from '@/stores/qa'
+import { useConfigStore, CONFIG_LABELS } from '@/stores/config'
 
 const qaStore = useQAStore()
+const configStore = useConfigStore()
 const messages = computed(() => qaStore.messages)
 const activeKBId = ref<string | null>(null)
-const configName = ref('base')
+// 与全局 configStore 双向绑定
+const configName = computed({
+  get: () => configStore.activeConfigName,
+  set: (v) => { configStore.activeConfigName = v },
+})
 const inputText = ref('')
 const streaming = ref(false)
 const messagesEl = ref<HTMLElement | null>(null)
 const kbList = ref<any[]>([])
-
-const configLabels: Record<string, string> = {
-  base: '基础混合检索',
-  fast: '高速（关闭父子块/重排）',
-  precision: '高精度（全功能）',
-  full: '完整功能+日志',
-}
+const configLabels = CONFIG_LABELS
 
 // Bad Case 自动检测词
 const FALLBACK_PHRASES = ['无法找到', '没有相关信息', '未找到', '无法回答', '没有找到', '无法从上下文中', '抱歉', '暂无']
@@ -168,6 +168,7 @@ function detectWarnings(content: string, pages: number[]): string[] {
     }
   }
   if (!pages.length) warns.push('答案未引用任何页码，无法验证来源')
+  if (content.length < 50) warns.push('答案过短，可能推理步骤不完整')
   return warns
 }
 
@@ -194,6 +195,8 @@ async function sendQuestion() {
   const token = localStorage.getItem('token') ?? ''
   const params = new URLSearchParams({ q, config_name: configName.value })
   if (activeKBId.value) params.append('kb_id', activeKBId.value)
+  const ov = configStore.getOverridesJson()
+  if (ov) params.append('overrides', ov)
   params.append('token', token)
   const es = new EventSource(`/api/qa/stream?${params.toString()}`)
 
