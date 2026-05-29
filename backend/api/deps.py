@@ -4,7 +4,7 @@ from pathlib import Path
 from functools import lru_cache
 from typing import Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 # 确保项目根目录在 sys.path
@@ -103,7 +103,7 @@ def _ensure_builtin_kb(store: SQLiteMetadataStore) -> None:
 # ---------------------------------------------------------------------------
 
 def get_current_user(
-    request=None,
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
     meta: SQLiteMetadataStore = Depends(get_metadata_store),
 ):
