@@ -16,7 +16,7 @@ VENV ?= ../../.venv
 PYTHON := $(shell [ -f $(VENV)/bin/python ] && echo $(VENV)/bin/python || echo python3)
 PIP    := $(PYTHON) -m pip
 
-BACKEND_PORT  ?= 8000
+BACKEND_PORT  ?= 8900
 FRONTEND_PORT ?= 5173
 
 .PHONY: all install install-python install-node dev backend frontend build test lint clean help
@@ -49,7 +49,7 @@ backend:  ## 启动 FastAPI 后端（端口 8000）
 		--port $(BACKEND_PORT) \
 		--log-level info
 
-frontend:  ## 启动 Vue3 前端开发服务（端口 5173，代理 /api → :8000）
+frontend:  ## 启动 Vue3 前端开发服务（端口 5173，代理 /api → :8900）
 	@echo "→ 启动前端 http://localhost:$(FRONTEND_PORT)"
 	cd frontend && npm run dev -- --port $(FRONTEND_PORT)
 

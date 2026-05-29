@@ -50,7 +50,7 @@ make install          # 同时安装 Python 依赖 + Node.js 依赖
 ### 3. 启动服务
 
 ```bash
-# 终端 1 — 后端 API（:8000）
+# 终端 1 — 后端 API（:8900）
 make backend
 
 # 终端 2 — 前端 dev server（:5173）
@@ -180,7 +180,7 @@ enterprise_rag/
 
 ## API 文档
 
-后端启动后访问 http://localhost:8000/docs（Swagger UI）。
+后端启动后访问 http://localhost:8900/docs（Swagger UI）。
 
 ## License
 

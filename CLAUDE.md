@@ -23,10 +23,10 @@ make install-node         # cd frontend && npm install
 
 ### 3. 启动服务（两个终端）
 
-**终端 1 — 后端（FastAPI :8000）**
+**终端 1 — 后端（FastAPI :8900）**
 ```bash
 make backend
-# 等价于：python -m uvicorn backend.main:app --reload --port 8000
+# 等价于：python -m uvicorn backend.main:app --reload --port 8900
 ```
 
 **终端 2 — 前端（Vue3 dev server :5173）**
@@ -55,7 +55,7 @@ make frontend FRONTEND_PORT=3000
 ```
 
 ### 6. API 文档
-后端启动后访问 http://localhost:8000/docs（Swagger UI）。
+后端启动后访问 http://localhost:8900/docs（Swagger UI）。
 
 ---
 

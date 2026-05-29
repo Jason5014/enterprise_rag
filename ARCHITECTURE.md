@@ -81,7 +81,7 @@ enterprise_rag/
 │   │   └── router/
 │   │       └── index.ts            路由守卫（未登录跳登录页）
 │   ├── package.json
-│   └── vite.config.ts              proxy: /api → http://localhost:8000
+│   └── vite.config.ts              proxy: /api → http://localhost:8900
 │
 ├── src/                        现有业务模块（基本不动）
 │   ├── storage/                新增：存储抽象层
