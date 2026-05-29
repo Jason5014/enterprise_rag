@@ -287,7 +287,8 @@ class RAGPipeline:
 
             merged = self._merge_search_results(all_results)
 
-            if self.retrieval_config.enable_rerank and merged:
+            rerank_applied = self.retrieval_config.enable_rerank and bool(merged)
+            if rerank_applied:
                 import copy
                 context = self.reranker.rerank(
                     question,
@@ -321,13 +322,43 @@ class RAGPipeline:
             self.conversation_history.add("user", question)
             self.conversation_history.add("assistant", "".join(full_answer))
 
-        # 末尾 yield 元数据（供 SSE 层提取页码、chunk 数等）
+        # 末尾 yield 元数据（页码 + 检索过程详情，供前端可视化）
         pages = sorted(set(
             r.get("metadata", {}).get("page")
             for r in context
             if r.get("metadata", {}).get("page") is not None
         ))
-        yield {"__meta__": True, "pages": pages, "chunk_count": len(context)}
+
+        def _chunk_summary(chunks, limit=10):
+            out = []
+            for r in chunks[:limit]:
+                meta = r.get("metadata", {}) or {}
+                out.append({
+                    "chunk_id": r.get("chunk_id", ""),
+                    "score": round(float(r.get("combined_score") or r.get("score") or 0), 4),
+                    "page": meta.get("page"),
+                    "source": meta.get("source", ""),
+                    "snippet": (r.get("content") or "")[:200],
+                })
+            return out
+
+        yield {
+            "__meta__": True,
+            "pages": pages,
+            "chunk_count": len(context),
+            # 检索过程可视化字段
+            "retrieval_process": {
+                "original_query": question,
+                "rewritten_query": rewritten_query if rewritten_query != question else None,
+                "query_rewrite_enabled": self.retrieval_config.enable_query_rewrite,
+                "multiquery_enabled": self.retrieval_config.enable_multiquery,
+                "query_variants": query_variants if self.retrieval_config.enable_multiquery else [],
+                "pre_rerank_count": len(merged),
+                "rerank_applied": rerank_applied,
+                "pre_rerank": _chunk_summary(merged, 10),
+                "post_rerank": _chunk_summary(context, 10),
+            },
+        }
 
     def _merge_search_results(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """合并多个搜索结果，按chunk_id去重并保留最高分"""

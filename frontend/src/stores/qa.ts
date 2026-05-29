@@ -7,6 +7,26 @@ export interface BadForm {
   comment: string
 }
 
+export interface ChunkSummary {
+  chunk_id: string
+  score: number
+  page?: number
+  source?: string
+  snippet: string
+}
+
+export interface RetrievalProcess {
+  original_query: string
+  rewritten_query?: string | null
+  query_rewrite_enabled: boolean
+  multiquery_enabled: boolean
+  query_variants: string[]
+  pre_rerank_count: number
+  rerank_applied: boolean
+  pre_rerank: ChunkSummary[]
+  post_rerank: ChunkSummary[]
+}
+
 export interface Message {
   role: 'user' | 'assistant'
   content: string
@@ -17,6 +37,7 @@ export interface Message {
   feedbackDone?: boolean
   showBadForm?: boolean
   badForm?: BadForm
+  retrievalProcess?: RetrievalProcess
 }
 
 export const useQAStore = defineStore('qa', () => {

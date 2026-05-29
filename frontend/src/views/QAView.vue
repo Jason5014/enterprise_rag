@@ -49,9 +49,102 @@
             引用页码：{{ msg.pages.join(', ') }}
           </div>
 
+          <!-- ===== 检索过程可视化 ===== -->
+          <el-collapse v-if="msg.role === 'assistant' && !msg.loading && msg.retrievalProcess"
+            style="margin-top:8px; border:none;">
+            <el-collapse-item name="retrieval">
+              <template #title>
+                <span style="font-size:12px; color:#909399;">🔍 查看检索过程</span>
+              </template>
+              <div class="retrieval-panel">
+
+                <!-- Stage 流程图 -->
+                <div class="stage-flow">
+                  <!-- Query Rewrite -->
+                  <div class="stage-node" :class="msg.retrievalProcess.query_rewrite_enabled ? 'active' : 'disabled'">
+                    <div class="stage-icon">✏️</div>
+                    <div class="stage-label">Query 改写</div>
+                    <div class="stage-status">{{ msg.retrievalProcess.query_rewrite_enabled ? '启用' : '关闭' }}</div>
+                  </div>
+                  <div class="stage-arrow">→</div>
+                  <!-- MultiQuery -->
+                  <div class="stage-node" :class="msg.retrievalProcess.multiquery_enabled ? 'active' : 'disabled'">
+                    <div class="stage-icon">🔄</div>
+                    <div class="stage-label">MultiQuery</div>
+                    <div class="stage-status">
+                      {{ msg.retrievalProcess.multiquery_enabled
+                        ? `${msg.retrievalProcess.query_variants.length} 个变体`
+                        : '关闭' }}
+                    </div>
+                  </div>
+                  <div class="stage-arrow">→</div>
+                  <!-- Retrieval -->
+                  <div class="stage-node active">
+                    <div class="stage-icon">🗃️</div>
+                    <div class="stage-label">向量检索</div>
+                    <div class="stage-status">{{ msg.retrievalProcess.pre_rerank_count }} 个候选</div>
+                  </div>
+                  <div class="stage-arrow">→</div>
+                  <!-- Rerank -->
+                  <div class="stage-node" :class="msg.retrievalProcess.rerank_applied ? 'active' : 'disabled'">
+                    <div class="stage-icon">🗳️</div>
+                    <div class="stage-label">Rerank 精排</div>
+                    <div class="stage-status">
+                      {{ msg.retrievalProcess.rerank_applied
+                        ? `→ ${msg.retrievalProcess.post_rerank.length} 个`
+                        : '关闭' }}
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Query 改写详情 -->
+                <template v-if="msg.retrievalProcess.query_rewrite_enabled && msg.retrievalProcess.rewritten_query">
+                  <div class="detail-section">
+                    <div class="detail-title">✏️ 改写结果</div>
+                    <div class="detail-row">
+                      <span class="detail-label">原始问题：</span>
+                      <span class="detail-text original">{{ msg.retrievalProcess.original_query }}</span>
+                    </div>
+                    <div class="detail-row">
+                      <span class="detail-label">改写后：</span>
+                      <span class="detail-text rewritten">{{ msg.retrievalProcess.rewritten_query }}</span>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- MultiQuery 变体 -->
+                <template v-if="msg.retrievalProcess.multiquery_enabled && msg.retrievalProcess.query_variants.length > 1">
+                  <div class="detail-section">
+                    <div class="detail-title">🔄 MultiQuery 变体（{{ msg.retrievalProcess.query_variants.length }} 个）</div>
+                    <div v-for="(v, vi) in msg.retrievalProcess.query_variants" :key="vi"
+                      class="variant-item">
+                      <span class="variant-idx">Q{{ vi + 1 }}</span>
+                      <span class="variant-text">{{ v }}</span>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- 检索结果对比（Rerank 前后） -->
+                <div class="detail-section">
+                  <el-tabs size="small" type="border-card" style="margin-top:4px;">
+                    <el-tab-pane
+                      :label="`Rerank 后（${msg.retrievalProcess.post_rerank.length}）`">
+                      <ChunkTable :chunks="msg.retrievalProcess.post_rerank" highlight />
+                    </el-tab-pane>
+                    <el-tab-pane
+                      :label="`Rerank 前（${msg.retrievalProcess.pre_rerank.length}）`">
+                      <ChunkTable :chunks="msg.retrievalProcess.pre_rerank" />
+                    </el-tab-pane>
+                  </el-tabs>
+                </div>
+
+              </div>
+            </el-collapse-item>
+          </el-collapse>
+
           <!-- 推理过程折叠 -->
           <el-collapse v-if="msg.role === 'assistant' && !msg.loading && msg.content"
-            style="margin-top:8px; border:none;">
+            style="margin-top:4px; border:none;">
             <el-collapse-item name="a">
               <template #title>
                 <span style="font-size:12px; color:#909399;">📖 查看推理过程</span>
@@ -133,13 +226,50 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, nextTick, watch, defineComponent, h } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Delete, Promotion, ChatDotRound, Document, CircleCheck, CircleClose } from '@element-plus/icons-vue'
 import { kbApi } from '@/api/kb'
 import { qaApi } from '@/api/qa'
-import { useQAStore, type Message } from '@/stores/qa'
+import { useQAStore, type Message, type ChunkSummary } from '@/stores/qa'
 import { useConfigStore, CONFIG_LABELS } from '@/stores/config'
+
+// ---- 内联子组件：Chunk 表格 ----
+const ChunkTable = defineComponent({
+  props: {
+    chunks: { type: Array as () => ChunkSummary[], required: true },
+    highlight: { type: Boolean, default: false },
+  },
+  setup(props) {
+    return () => h('div', { style: 'overflow-x:auto;' }, [
+      h('table', { style: 'width:100%; border-collapse:collapse; font-size:11px;' }, [
+        h('thead', {}, [
+          h('tr', { style: 'background:#f5f7fa; color:#606266;' }, [
+            h('th', { style: 'padding:4px 8px; text-align:left; width:30px;' }, '#'),
+            h('th', { style: 'padding:4px 8px; text-align:left;' }, 'Chunk ID'),
+            h('th', { style: 'padding:4px 8px; text-align:right; width:60px;' }, '得分'),
+            h('th', { style: 'padding:4px 8px; text-align:right; width:50px;' }, '页码'),
+            h('th', { style: 'padding:4px 8px; text-align:left;' }, '摘要'),
+          ]),
+        ]),
+        h('tbody', {}, props.chunks.map((c, idx) => {
+          const rowStyle = props.highlight && idx === 0
+            ? 'background:#f0f9eb;'
+            : idx % 2 === 0 ? '' : 'background:#fafafa;'
+          return h('tr', { key: c.chunk_id, style: rowStyle }, [
+            h('td', { style: 'padding:4px 8px; color:#909399;' },
+              idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : String(idx + 1)
+            ),
+            h('td', { style: 'padding:4px 8px; color:#409eff; font-family:monospace; white-space:nowrap; max-width:160px; overflow:hidden; text-overflow:ellipsis;' }, c.chunk_id),
+            h('td', { style: `padding:4px 8px; text-align:right; font-weight:600; color:${c.score > 0.7 ? '#67c23a' : c.score > 0.4 ? '#e6a23c' : '#f56c6c'};` }, c.score.toFixed(3)),
+            h('td', { style: 'padding:4px 8px; text-align:right; color:#909399;' }, c.page ?? '-'),
+            h('td', { style: 'padding:4px 8px; color:#606266; max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;' }, c.snippet),
+          ])
+        })),
+      ]),
+    ])
+  },
+})
 
 const qaStore = useQAStore()
 const configStore = useConfigStore()
@@ -223,12 +353,16 @@ async function sendQuestion() {
     qaStore.updateLast({ content: fullText })
   }
 
-  // 元数据事件（pages、chunk_count）
+  // 元数据事件（pages、retrieval_process）
   es.addEventListener('meta', (e: MessageEvent) => {
     try {
       const meta = JSON.parse(e.data)
       pages = meta.pages ?? []
-      qaStore.updateLast({ pages })
+      const patch: Partial<Message> = { pages }
+      if (meta.retrieval_process) {
+        patch.retrievalProcess = meta.retrieval_process
+      }
+      qaStore.updateLast(patch)
     } catch { /* ignore */ }
   })
 
@@ -305,7 +439,7 @@ async function submitBadFeedback(msg: Message, idx: number) {
   justify-content: center; color: #c0c4cc; gap: 8px; padding: 60px 0;
 }
 .message-row {
-  display: flex; gap: 10px; max-width: 860px;
+  display: flex; gap: 10px; max-width: 900px;
 }
 .message-row.user { flex-direction: row-reverse; align-self: flex-end; }
 .message-row.assistant { align-self: flex-start; }
@@ -317,7 +451,7 @@ async function submitBadFeedback(msg: Message, idx: number) {
 .message-row.user .avatar { background: #67c23a; }
 .bubble {
   background: #fff; border-radius: 12px; padding: 12px 16px;
-  box-shadow: 0 1px 4px rgba(0,0,0,.06); max-width: 720px; line-height: 1.7;
+  box-shadow: 0 1px 4px rgba(0,0,0,.06); max-width: 760px; line-height: 1.7;
 }
 .message-row.user .bubble { background: #ecf5ff; }
 .typing-dot { animation: blink 1s infinite; color: #909399; }
@@ -326,4 +460,106 @@ async function submitBadFeedback(msg: Message, idx: number) {
   padding: 14px 20px; background: #fff; border-top: 1px solid #ebeef5;
   display: flex; align-items: center; gap: 10px; flex-shrink: 0;
 }
+
+/* 检索过程可视化 */
+.retrieval-panel {
+  font-size: 12px;
+  padding: 8px 4px;
+}
+
+.stage-flow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.stage-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid #ebeef5;
+  min-width: 80px;
+  text-align: center;
+}
+
+.stage-node.active {
+  background: #f0f9eb;
+  border-color: #b3e19d;
+}
+
+.stage-node.disabled {
+  background: #f5f7fa;
+  border-color: #dcdfe6;
+  opacity: 0.6;
+}
+
+.stage-icon { font-size: 16px; }
+.stage-label { font-size: 11px; font-weight: 600; color: #303133; }
+.stage-status { font-size: 10px; color: #909399; }
+
+.stage-arrow {
+  color: #c0c4cc;
+  font-size: 16px;
+  font-weight: 300;
+  flex-shrink: 0;
+}
+
+.detail-section {
+  margin-bottom: 10px;
+  background: #fafafa;
+  border-radius: 6px;
+  padding: 8px 10px;
+  border: 1px solid #ebeef5;
+}
+
+.detail-title {
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.detail-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.detail-label {
+  color: #909399;
+  flex-shrink: 0;
+  width: 70px;
+}
+
+.detail-text {
+  line-height: 1.5;
+}
+
+.detail-text.original { color: #606266; }
+.detail-text.rewritten { color: #409eff; font-weight: 500; }
+
+.variant-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.variant-idx {
+  background: #409eff;
+  color: #fff;
+  border-radius: 10px;
+  padding: 0 6px;
+  font-size: 10px;
+  flex-shrink: 0;
+  line-height: 18px;
+}
+
+.variant-text { color: #606266; }
 </style>

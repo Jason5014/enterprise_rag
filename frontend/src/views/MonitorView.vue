@@ -34,12 +34,12 @@
     </el-row>
 
     <el-row :gutter="16" style="margin-bottom:20px;">
-      <!-- 错误类型分析 -->
-      <el-col :span="12">
+      <!-- 错误类型分析（M3：含可展开诊断） -->
+      <el-col :span="14">
         <el-card style="height:100%;">
           <template #header>
             <div style="display:flex; align-items:center; justify-content:space-between;">
-              <span>🔍 错误类型分布</span>
+              <span>🔍 错误类型分布 &amp; 诊断</span>
               <el-tag size="small" type="danger" effect="plain">
                 Bad Case 共 {{ analysis.total_bad ?? 0 }} 条
               </el-tag>
@@ -49,52 +49,78 @@
           <el-empty v-if="!analysis.error_types || !Object.keys(analysis.error_types).length"
             description="暂无 Bad Case 数据" :image-size="60" />
 
-          <div v-else>
-            <div v-for="(cnt, etype) in analysis.error_types" :key="etype" class="error-row">
-              <div class="error-info">
-                <el-tag :type="errorTagType(etype)" size="small" effect="light">
-                  {{ errorLabel(etype) }}
-                </el-tag>
-                <span style="font-size:12px; color:#909399; margin-left:6px;">
-                  {{ errorStage(etype) }}
-                </span>
-              </div>
-              <div class="error-bar-wrap">
-                <div class="error-bar"
-                  :style="{ width: barPct(cnt, analysis.total_bad) + '%', background: errorColor(etype) }" />
-              </div>
-              <span class="error-count">{{ cnt }}</span>
-            </div>
+          <el-collapse v-else accordion>
+            <el-collapse-item v-for="(cnt, etype) in analysis.error_types" :key="etype" :name="etype">
+              <template #title>
+                <div class="error-row" style="flex:1; margin-bottom:0;">
+                  <div class="error-info">
+                    <el-tag :type="errorTagType(etype)" size="small" effect="light">
+                      {{ errorLabel(etype) }}
+                    </el-tag>
+                    <span style="font-size:11px; color:#909399; margin-left:6px;">
+                      {{ stageLabel(errorStage(etype)) }}
+                    </span>
+                  </div>
+                  <div class="error-bar-wrap">
+                    <div class="error-bar"
+                      :style="{ width: barPct(cnt, analysis.total_bad) + '%', background: errorColor(etype) }" />
+                  </div>
+                  <span class="error-count">{{ cnt }}</span>
+                </div>
+              </template>
 
-            <!-- 示例查询 -->
-            <el-collapse style="margin-top:12px; border:none;">
-              <el-collapse-item v-for="(queries, etype) in analysis.error_queries" :key="etype" :name="etype">
-                <template #title>
-                  <span style="font-size:12px; color:#909399;">
-                    {{ errorLabel(etype) }} 示例问题
-                  </span>
-                </template>
-                <ul style="margin:0; padding-left:16px; font-size:12px; color:#606266;">
-                  <li v-for="(q, i) in queries" :key="i">{{ q }}</li>
-                </ul>
-              </el-collapse-item>
-            </el-collapse>
-          </div>
+              <!-- M3: 展开诊断面板 -->
+              <div v-if="getDiagnosis(etype)" class="diagnosis-panel">
+                <el-row :gutter="12">
+                  <el-col :span="12">
+                    <div class="diag-block">
+                      <div class="diag-title">🔎 根因分析</div>
+                      <div class="diag-text">{{ getDiagnosis(etype)!.root_cause }}</div>
+                    </div>
+                    <div class="diag-block" style="margin-top:8px;">
+                      <div class="diag-title">📋 诊断说明</div>
+                      <div class="diag-text">{{ getDiagnosis(etype)!.diagnosis }}</div>
+                    </div>
+                  </el-col>
+                  <el-col :span="12">
+                    <div class="diag-block">
+                      <div class="diag-title">⚙️ 调参建议</div>
+                      <ul class="diag-list">
+                        <li v-for="(p, pi) in getDiagnosis(etype)!.optimize_params" :key="pi">{{ p }}</li>
+                      </ul>
+                    </div>
+                    <div class="diag-block" style="margin-top:8px;">
+                      <div class="diag-title">✅ 验证方法</div>
+                      <div class="diag-text tip">{{ getDiagnosis(etype)!.eval_tip }}</div>
+                    </div>
+                  </el-col>
+                </el-row>
+
+                <!-- 示例问题 -->
+                <div v-if="analysis.error_queries?.[etype]?.length" style="margin-top:8px;">
+                  <div class="diag-title">💬 示例问题</div>
+                  <ul class="diag-list">
+                    <li v-for="(q, qi) in analysis.error_queries[etype]" :key="qi">{{ q }}</li>
+                  </ul>
+                </div>
+              </div>
+            </el-collapse-item>
+          </el-collapse>
         </el-card>
       </el-col>
 
       <!-- 阶段分布 & 配置对比 -->
-      <el-col :span="12">
+      <el-col :span="10">
         <el-card style="margin-bottom:12px;">
           <template #header><span>⚙️ Pipeline 阶段分布</span></template>
           <el-empty v-if="!analysis.stage_distribution || !Object.keys(analysis.stage_distribution).length"
             description="暂无数据" :image-size="60" />
           <div v-else>
             <div v-for="(cnt, stage) in analysis.stage_distribution" :key="stage" class="error-row">
-              <el-tag size="small" effect="plain">{{ stageLabel(stage) }}</el-tag>
+              <el-tag size="small" effect="plain" :type="stageTagType(stage)">{{ stageLabel(stage) }}</el-tag>
               <div class="error-bar-wrap">
                 <div class="error-bar"
-                  :style="{ width: barPct(cnt, analysis.total_bad) + '%', background: '#409eff' }" />
+                  :style="{ width: barPct(cnt, analysis.total_bad) + '%', background: stageColor(stage) }" />
               </div>
               <span class="error-count">{{ cnt }}</span>
             </div>
@@ -111,8 +137,8 @@
                 <el-tag size="small">{{ row.name }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="总数" prop="total" width="65" align="center" />
-            <el-table-column label="好评" prop="helpful" width="65" align="center" />
+            <el-table-column label="总数" prop="total" width="60" align="center" />
+            <el-table-column label="好评" prop="helpful" width="60" align="center" />
             <el-table-column label="好评率">
               <template #default="{ row }">
                 <el-progress :percentage="row.good_rate" :color="rateColor(row.good_rate)"
@@ -123,6 +149,24 @@
         </el-card>
       </el-col>
     </el-row>
+
+    <!-- M7: 优化路线图 -->
+    <el-card v-if="roadmapItems.length > 0" style="margin-bottom:20px;">
+      <template #header>
+        <span>🗺️ 优化路线图</span>
+        <el-tooltip content="根据 Bad Case 分布自动生成的分阶段优先优化建议">
+          <el-icon style="margin-left:6px; color:#909399; cursor:help;"><QuestionFilled /></el-icon>
+        </el-tooltip>
+      </template>
+      <el-steps :active="0" direction="vertical" style="padding:8px 0;">
+        <el-step v-for="(item, idx) in roadmapItems" :key="idx"
+          :title="item.title"
+          :description="item.desc"
+          :status="item.status"
+          :icon="item.icon">
+        </el-step>
+      </el-steps>
+    </el-card>
 
     <!-- 优化建议 -->
     <el-card v-if="suggestions.length > 0" style="margin-bottom:20px;">
@@ -175,12 +219,14 @@
           <template #default="{ row }">
             <div style="padding:12px 24px; background:#fafafa; font-size:13px; line-height:1.8;">
               <el-row :gutter="16">
+                <!-- 左列：问答内容 -->
                 <el-col :span="12">
                   <div style="font-weight:600; color:#303133; margin-bottom:4px;">问题</div>
                   <div style="color:#606266;">{{ row.query }}</div>
                   <div style="font-weight:600; color:#303133; margin-top:10px; margin-bottom:4px;">答案</div>
                   <div style="color:#606266; white-space:pre-wrap;">{{ row.answer }}</div>
                 </el-col>
+                <!-- 右列：用户反馈 + M5-M6 Pipeline 诊断 -->
                 <el-col :span="12">
                   <template v-if="row.user_feedback?.correct_answer">
                     <div style="font-weight:600; color:#67c23a; margin-bottom:4px;">✅ 正确答案</div>
@@ -194,12 +240,35 @@
                     <div style="font-weight:600; color:#303133; margin-top:10px; margin-bottom:4px;">引用页码</div>
                     <div style="color:#909399;">{{ row.relevant_pages.join(', ') }}</div>
                   </template>
-                  <!-- 优化建议 -->
-                  <div style="margin-top:10px;">
-                    <el-tag size="small" effect="plain" style="margin-right:4px;">
-                      阶段：{{ stageLabel(errorStage(row.user_feedback?.error_type)) }}
-                    </el-tag>
-                    <div style="font-size:12px; color:#909399; margin-top:4px;">
+
+                  <!-- M5-M6: Pipeline 诊断 -->
+                  <div class="pipeline-diag" style="margin-top:12px;">
+                    <div style="font-weight:600; color:#303133; margin-bottom:8px; display:flex; align-items:center; gap:6px;">
+                      🔬 Pipeline 诊断
+                      <el-tag size="small" :type="stageTagType(errorStage(row.user_feedback?.error_type))" effect="light">
+                        {{ stageLabel(errorStage(row.user_feedback?.error_type)) }}
+                      </el-tag>
+                    </div>
+                    <div v-if="getDiagnosis(row.user_feedback?.error_type)" class="diag-mini">
+                      <div class="diag-mini-row">
+                        <span class="diag-mini-label">根因</span>
+                        <span>{{ getDiagnosis(row.user_feedback?.error_type)!.root_cause }}</span>
+                      </div>
+                      <div class="diag-mini-row" style="margin-top:6px;">
+                        <span class="diag-mini-label">修复</span>
+                        <ul style="margin:0; padding-left:14px; color:#606266;">
+                          <li v-for="(p, pi) in getDiagnosis(row.user_feedback?.error_type)!.optimize_params" :key="pi"
+                            style="font-size:12px;">{{ p }}</li>
+                        </ul>
+                      </div>
+                      <div class="diag-mini-row" style="margin-top:6px;">
+                        <span class="diag-mini-label">验证</span>
+                        <span style="color:#409eff; font-size:12px;">
+                          {{ getDiagnosis(row.user_feedback?.error_type)!.eval_tip }}
+                        </span>
+                      </div>
+                    </div>
+                    <div v-else style="font-size:12px; color:#909399;">
                       {{ optimizationHint(row.user_feedback?.error_type) }}
                     </div>
                   </div>
@@ -223,6 +292,14 @@
         <el-table-column label="配置" width="80">
           <template #default="{ row }">
             <el-tag v-if="row.config_name" size="small">{{ row.config_name }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="阶段" width="100">
+          <template #default="{ row }">
+            <el-tag size="small" effect="plain"
+              :type="stageTagType(errorStage(row.user_feedback?.error_type))">
+              {{ stageLabel(errorStage(row.user_feedback?.error_type)) }}
+            </el-tag>
           </template>
         </el-table-column>
         <el-table-column label="有纠正答案" width="90" align="center">
@@ -253,9 +330,97 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { Refresh, Download, Plus, Warning, TrendCharts, DocumentChecked } from '@element-plus/icons-vue'
+import { Refresh, Download, Plus, Warning, TrendCharts, DocumentChecked, QuestionFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import http from '@/api/http'
+
+// ---- 错误诊断知识库 (M3) ----
+interface DiagnosisEntry {
+  root_cause: string
+  diagnosis: string
+  optimize_params: string[]
+  eval_tip: string
+}
+
+const ERROR_DIAGNOSIS: Record<string, DiagnosisEntry> = {
+  hallucination: {
+    root_cause: 'LLM 在上下文不足时进行了推测性生成，超出了检索结果范围',
+    diagnosis: '答案包含检索文档中不存在的信息。通常发生在检索召回不足或 prompt 约束力弱的情况下。',
+    optimize_params: [
+      '降低 LLM temperature（建议 0.1~0.3）',
+      '在 prompt 中加入"仅根据以下上下文回答，不确定时说不知道"',
+      '增大 top_k_retrieval 确保更多上下文可用',
+      '启用 Rerank 过滤低相关性块',
+    ],
+    eval_tip: '运行评估并关注 Faithfulness 指标；使用 LLM-as-Judge 模式检测答案是否有据可查',
+  },
+  irrelevant: {
+    root_cause: '向量检索召回了主题偏离的文档，或 Query 与文档表述不匹配',
+    diagnosis: '答案与问题无关，说明检索阶段未找到正确文档。可能是向量模型语义理解不足或 Query 未经改写。',
+    optimize_params: [
+      '启用 Query 改写（enable_query_rewrite=true）',
+      '启用 MultiQuery 扩大召回面（enable_multiquery=true）',
+      '增大 top_k_retrieval（建议 ≥20）',
+      '检查 BM25 权重配置，考虑混合检索比例',
+    ],
+    eval_tip: '运行评估关注 Hit@5 和 Recall@5；如低于 0.7 说明检索阶段问题显著',
+  },
+  incomplete: {
+    root_cause: '相关文档被召回但不完整，或关键信息分散在多个 Chunk 中未被合并',
+    diagnosis: '答案遗漏了关键信息，通常是 chunk 切分过细或 top_k 不够大，导致覆盖不全。',
+    optimize_params: [
+      '启用父子块检索（enable_parent_retrieval=true）',
+      '增大 chunk_size（建议 500~800）',
+      '增大 top_k_retrieval（建议 ≥20）',
+      '增大 rerank_top_k 保留更多候选块',
+    ],
+    eval_tip: '运行评估关注 Recall@5 和 NDCG@5；比较启用/关闭父子块的差异',
+  },
+  factual_error: {
+    root_cause: '文档中的事实信息被错误理解，或 LLM 在多个片段混合时出现数字/日期混淆',
+    diagnosis: '答案包含错误的数字、日期或事实。通常源于检索结果质量低或文档解析错误（表格、图表）。',
+    optimize_params: [
+      '检查文档解析质量，特别是表格和数字密集段落',
+      '重建索引（重新 chunk 文档）',
+      '启用 Rerank 提升相关文档排名',
+      '在 prompt 中强调引用具体数字时要原文引用',
+    ],
+    eval_tip: '人工核查高频错误问题；对比不同 chunk_size 下的评估分数',
+  },
+  outdated: {
+    root_cause: '知识库中的文档版本过旧，与用户问题所需信息存在时效差距',
+    diagnosis: '答案引用了过期信息。知识库需要更新以包含最新文档版本。',
+    optimize_params: [
+      '更新知识库文档（上传新版 PDF）',
+      '重新执行文档解析和索引构建',
+      '在文档元数据中记录版本/时间信息',
+    ],
+    eval_tip: '更新文档后重新运行评估，对比新旧指标变化',
+  },
+  other: {
+    root_cause: '问题原因未明确分类，需要人工分析具体场景',
+    diagnosis: '该 Bad Case 标记为"其他"类型，建议人工查看问题细节，寻找共性模式后归类。',
+    optimize_params: [
+      '人工阅读问题和答案，识别问题模式',
+      '考虑将其细化为上述具体错误类型',
+      '收集更多同类问题后针对性优化',
+    ],
+    eval_tip: '聚焦评估集中的相似问题，观察系统性偏差',
+  },
+  unclassified: {
+    root_cause: '用户未为该 Bad Case 指定错误类型',
+    diagnosis: '未分类的 Bad Case 可能隐含各类问题。建议在差评时引导用户选择错误类型。',
+    optimize_params: [
+      '在差评弹窗中设置必填的错误类型字段',
+      '定期人工分类未标注的 Bad Case',
+    ],
+    eval_tip: '提高 Bad Case 分类率，有助于更精准的问题定位',
+  },
+}
+
+function getDiagnosis(etype: string | number | undefined): DiagnosisEntry | null {
+  return ERROR_DIAGNOSIS[String(etype ?? '')] ?? null
+}
 
 const stats = ref({ total: 0, good: 0, bad: 0, good_rate: 0 })
 const analysis = ref<any>({})
@@ -400,17 +565,34 @@ function stageLabel(stage: string | number | undefined): string {
   return map[key] ?? key
 }
 
-function optimizationHint(etype: string | number | undefined): string {
-  const key = String(etype ?? '')
-  const map: Record<string, string> = {
-    hallucination: '建议：调低 temperature，增加引用约束提示词，使用更严格的 Grounding 检查',
-    irrelevant: '建议：优化检索策略（增大 top_k、调整 hybrid_alpha），检查向量模型效果',
-    incomplete: '建议：增大 top_k 或启用父子块检索，确保关键段落被召回',
-    factual_error: '建议：检查文档质量，考虑重建索引；使用重排序过滤低相关块',
-    outdated: '建议：更新知识库文档，定期重新索引',
-    other: '建议：人工分析具体原因，针对性优化',
+function stageTagType(stage: string | number | undefined): '' | 'success' | 'warning' | 'danger' | 'info' {
+  const key = String(stage ?? '')
+  const map: Record<string, '' | 'success' | 'warning' | 'danger' | 'info'> = {
+    generate: 'danger',
+    retrieval: 'warning',
+    'retrieval+generate': 'warning',
+    index: 'info',
+    unknown: 'info',
   }
-  return map[key] ?? '建议：人工分析问题原因'
+  return map[key] ?? 'info'
+}
+
+function stageColor(stage: string | number | undefined): string {
+  const key = String(stage ?? '')
+  const map: Record<string, string> = {
+    generate: '#f56c6c',
+    retrieval: '#e6a23c',
+    'retrieval+generate': '#f5a623',
+    index: '#909399',
+    unknown: '#c0c4cc',
+  }
+  return map[key] ?? '#c0c4cc'
+}
+
+function optimizationHint(etype: string | number | undefined): string {
+  const d = getDiagnosis(etype)
+  if (d) return d.optimize_params[0] ?? ''
+  return '建议：人工分析问题原因'
 }
 
 function rateColor(rate: number): string {
@@ -479,6 +661,71 @@ const suggestions = computed(() => {
 
   return result
 })
+
+// M7: 优化路线图 — 按阶段优先级生成步骤
+const roadmapItems = computed(() => {
+  const et = analysis.value?.error_types ?? {}
+  const total = analysis.value?.total_bad ?? 0
+  if (!total) return []
+
+  const items: any[] = []
+
+  // 索引阶段
+  const indexCnt = et.outdated ?? 0
+  if (indexCnt > 0) {
+    items.push({
+      title: `【索引阶段】更新知识库文档（${indexCnt} 条过时问题）`,
+      desc: '上传最新版 PDF 并重新执行文档解析与分块索引',
+      status: indexCnt / total > 0.2 ? 'error' : 'process',
+      icon: null,
+    })
+  }
+
+  // 检索阶段
+  const retrievalCnt = (et.irrelevant ?? 0) + (et.incomplete ?? 0)
+  if (retrievalCnt > 0) {
+    const pct = Math.round(retrievalCnt / total * 100)
+    items.push({
+      title: `【检索阶段】优化召回策略（${retrievalCnt} 条相关性/完整性问题，占 ${pct}%）`,
+      desc: '启用 Query 改写 + MultiQuery + 父子块检索；增大 top_k；调整 BM25/RRF 融合权重',
+      status: pct > 30 ? 'error' : 'process',
+      icon: null,
+    })
+  }
+
+  // 重排阶段
+  const factCnt = et.factual_error ?? 0
+  if (factCnt > 0) {
+    items.push({
+      title: `【重排阶段】提升精排质量（${factCnt} 条事实错误）`,
+      desc: '启用 Rerank 精排过滤低相关块；调整 rerank_top_k；检查文档解析质量',
+      status: factCnt / total > 0.15 ? 'error' : 'process',
+      icon: null,
+    })
+  }
+
+  // 生成阶段
+  const hallCnt = et.hallucination ?? 0
+  if (hallCnt > 0) {
+    const pct = Math.round(hallCnt / total * 100)
+    items.push({
+      title: `【生成阶段】控制幻觉输出（${hallCnt} 条幻觉问题，占 ${pct}%）`,
+      desc: '降低 temperature，强化 Grounding Prompt，限制模型只基于上下文回答',
+      status: pct > 30 ? 'error' : 'process',
+      icon: null,
+    })
+  }
+
+  // 验证阶段（始终显示）
+  items.push({
+    title: '【验证阶段】重新运行评估集，对比优化前后指标',
+    desc: '在评估测试页运行多配置对比，关注 Hit@5 / Recall@5 / MRR 变化趋势',
+    status: 'wait',
+    icon: null,
+  })
+
+  return items
+})
 </script>
 
 <style scoped>
@@ -532,5 +779,73 @@ const suggestions = computed(() => {
   margin-top: 2px;
   flex-shrink: 0;
   font-size: 16px;
+}
+
+/* M3 诊断面板 */
+.diagnosis-panel {
+  padding: 12px;
+  background: #fafafa;
+  border-radius: 6px;
+  margin-top: 4px;
+  border: 1px solid #ebeef5;
+  font-size: 12px;
+}
+
+.diag-block {
+  background: #fff;
+  border-radius: 4px;
+  padding: 8px 10px;
+  border: 1px solid #f0f0f0;
+}
+
+.diag-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 4px;
+}
+
+.diag-text {
+  color: #606266;
+  line-height: 1.6;
+}
+
+.diag-text.tip {
+  color: #409eff;
+}
+
+.diag-list {
+  margin: 0;
+  padding-left: 16px;
+  color: #606266;
+  line-height: 1.8;
+}
+
+/* M5-M6 Pipeline 诊断（Bad Case 展开中） */
+.pipeline-diag {
+  background: #f8f9fa;
+  border-radius: 6px;
+  padding: 10px 12px;
+  border: 1px solid #ebeef5;
+}
+
+.diag-mini {
+  font-size: 12px;
+}
+
+.diag-mini-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.diag-mini-label {
+  background: #409eff;
+  color: #fff;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  line-height: 18px;
 }
 </style>
