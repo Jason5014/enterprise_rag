@@ -295,10 +295,14 @@ class TextSplitter:
 
     def split_directory(self, directory: str) -> List[Dict[str, Any]]:
         """
-        读取目录下的所有 Markdown 文件并分块
+        读取目录下的解析结果文件并分块，保留页码信息。
+
+        支持两种格式：
+        - JSON 文件（MinerU 解析输出）：从 content.pages 按页分块
+        - Markdown 文件：整文件作为一个文档分块
 
         Args:
-            directory: 包含 .md 文件的目录路径
+            directory: 包含解析结果的目录路径
 
         Returns:
             扁平化的 chunk 字典列表（包含 text, chunk_id, parent_id, metadata）
@@ -306,19 +310,56 @@ class TextSplitter:
         dir_path = Path(directory)
         documents = []
 
+        # 优先读取 JSON 文件（MinerU 解析输出）
+        for json_file in sorted(dir_path.glob("*.json")):
+            try:
+                data = json.loads(json_file.read_text(encoding="utf-8"))
+            except Exception as e:
+                logger.warning("读取 JSON 失败 %s: %s", json_file.name, e)
+                continue
+
+            source = data.get("metainfo", {}).get("source", json_file.stem)
+            pages = data.get("content", {}).get("pages", [])
+
+            if pages:
+                # 按页创建文档，保留页码
+                for page_data in pages:
+                    page_text = page_data.get("text", "").strip()
+                    if not page_text:
+                        continue
+                    page_num = page_data.get("page", 0)
+                    doc_id = f"{json_file.stem}_p{page_num}"
+                    documents.append({
+                        "text": page_text,
+                        "doc_id": doc_id,
+                        "metadata": {
+                            "source_file": source,
+                            "page": page_num,
+                        }
+                    })
+            else:
+                # 无 pages 数组，尝试从 markdown 字段读取
+                md = data.get("content", {}).get("markdown", "")
+                if md.strip():
+                    documents.append({
+                        "text": md,
+                        "doc_id": json_file.stem,
+                        "metadata": {"source_file": source}
+                    })
+
+        # 兜底：也读取 .md 文件
         for md_file in sorted(dir_path.glob("*.md")):
             text = md_file.read_text(encoding="utf-8")
             if not text.strip():
                 continue
-            doc_id = md_file.stem
             documents.append({
                 "text": text,
-                "doc_id": doc_id,
+                "doc_id": md_file.stem,
                 "metadata": {"source_file": md_file.name}
             })
 
         if not documents:
-            logger.warning("目录 %s 下未找到 .md 文件", directory)
+            logger.warning("目录 %s 下未找到可分块的文件", directory)
             return []
 
         result = self.split_documents(documents)
