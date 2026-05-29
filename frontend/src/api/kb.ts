@@ -4,6 +4,9 @@ export interface KB {
   kb_id: string; name: string; description: string; config_name: string
   status: string; doc_count: number; chunk_count: number
   owner_id?: string; created_at: string; updated_at: string
+  chunk_size?: number | null; chunk_overlap?: number | null
+  parent_chunk_size?: number | null; split_method: string
+  enable_parent_retrieval?: boolean | null
 }
 
 export interface Doc {

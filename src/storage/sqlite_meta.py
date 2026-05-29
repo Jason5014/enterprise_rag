@@ -21,17 +21,22 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE TABLE IF NOT EXISTS knowledge_bases (
-    kb_id       TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    description TEXT DEFAULT '',
-    config_name TEXT DEFAULT 'base',
-    status      TEXT DEFAULT 'empty',
-    doc_count   INTEGER DEFAULT 0,
-    chunk_count INTEGER DEFAULT 0,
-    owner_id    TEXT REFERENCES users(user_id),
-    created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL,
-    index_dir   TEXT                           -- 覆盖默认索引路径（内置/迁移 KB）
+    kb_id                   TEXT PRIMARY KEY,
+    name                    TEXT NOT NULL,
+    description             TEXT DEFAULT '',
+    config_name             TEXT DEFAULT 'base',
+    status                  TEXT DEFAULT 'empty',
+    doc_count               INTEGER DEFAULT 0,
+    chunk_count             INTEGER DEFAULT 0,
+    owner_id                TEXT REFERENCES users(user_id),
+    created_at              TEXT NOT NULL,
+    updated_at              TEXT NOT NULL,
+    index_dir               TEXT,
+    chunk_size              INTEGER,
+    chunk_overlap           INTEGER,
+    parent_chunk_size       INTEGER,
+    split_method            TEXT DEFAULT 'fixed',
+    enable_parent_retrieval INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS documents (
@@ -79,11 +84,20 @@ class SQLiteMetadataStore(MetadataStore):
     def _init_db(self):
         with self._conn() as conn:
             conn.executescript(_SCHEMA)
-            # 兼容迁移：给已有数据库追加 index_dir 列（新建库由 _SCHEMA 直接创建）
-            try:
-                conn.execute("ALTER TABLE knowledge_bases ADD COLUMN index_dir TEXT")
-            except Exception:
-                pass  # 列已存在，忽略
+            # 兼容迁移：给已有数据库追加新列（新建库由 _SCHEMA 直接创建）
+            _migrations = [
+                "ALTER TABLE knowledge_bases ADD COLUMN index_dir TEXT",
+                "ALTER TABLE knowledge_bases ADD COLUMN chunk_size INTEGER",
+                "ALTER TABLE knowledge_bases ADD COLUMN chunk_overlap INTEGER",
+                "ALTER TABLE knowledge_bases ADD COLUMN parent_chunk_size INTEGER",
+                "ALTER TABLE knowledge_bases ADD COLUMN split_method TEXT DEFAULT 'fixed'",
+                "ALTER TABLE knowledge_bases ADD COLUMN enable_parent_retrieval INTEGER",
+            ]
+            for sql in _migrations:
+                try:
+                    conn.execute(sql)
+                except Exception:
+                    pass  # 列已存在，忽略
 
     @contextmanager
     def _conn(self):
@@ -144,17 +158,25 @@ class SQLiteMetadataStore(MetadataStore):
                   owner_id: Optional[str] = None,
                   kb_id: Optional[str] = None,
                   status: str = "empty",
-                  index_dir: Optional[str] = None) -> str:
+                  index_dir: Optional[str] = None,
+                  chunk_size: Optional[int] = None,
+                  chunk_overlap: Optional[int] = None,
+                  parent_chunk_size: Optional[int] = None,
+                  split_method: str = "fixed",
+                  enable_parent_retrieval: Optional[bool] = None) -> str:
         kid = kb_id or _uid()
         now = _now()
+        epr = int(enable_parent_retrieval) if enable_parent_retrieval is not None else None
         with self._conn() as conn:
             conn.execute(
                 "INSERT INTO knowledge_bases"
                 "(kb_id,name,description,config_name,status,doc_count,chunk_count,"
-                " owner_id,created_at,updated_at,index_dir)"
-                " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                " owner_id,created_at,updated_at,index_dir,"
+                " chunk_size,chunk_overlap,parent_chunk_size,split_method,enable_parent_retrieval)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (kid, name, description, config_name, status, 0, 0,
-                 owner_id, now, now, index_dir),
+                 owner_id, now, now, index_dir,
+                 chunk_size, chunk_overlap, parent_chunk_size, split_method, epr),
             )
         return kid
 
@@ -194,6 +216,7 @@ class SQLiteMetadataStore(MetadataStore):
     @staticmethod
     def _row_to_kb(row) -> KBRecord:
         keys = row.keys()
+        epr_val = row["enable_parent_retrieval"] if "enable_parent_retrieval" in keys else None
         return KBRecord(
             kb_id=row["kb_id"],
             name=row["name"],
@@ -206,6 +229,11 @@ class SQLiteMetadataStore(MetadataStore):
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             index_dir=row["index_dir"] if "index_dir" in keys else None,
+            chunk_size=row["chunk_size"] if "chunk_size" in keys else None,
+            chunk_overlap=row["chunk_overlap"] if "chunk_overlap" in keys else None,
+            parent_chunk_size=row["parent_chunk_size"] if "parent_chunk_size" in keys else None,
+            split_method=row["split_method"] if "split_method" in keys and row["split_method"] else "fixed",
+            enable_parent_retrieval=bool(epr_val) if epr_val is not None else None,
         )
 
     # --- Documents ---

@@ -6,12 +6,22 @@ class KBCreateRequest(BaseModel):
     name: str
     description: str = ""
     config_name: str = "base"
+    chunk_size: Optional[int] = None
+    chunk_overlap: Optional[int] = None
+    parent_chunk_size: Optional[int] = None
+    split_method: str = "fixed"
+    enable_parent_retrieval: Optional[bool] = None
 
 
 class KBUpdateRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     config_name: Optional[str] = None
+    chunk_size: Optional[int] = None
+    chunk_overlap: Optional[int] = None
+    parent_chunk_size: Optional[int] = None
+    split_method: Optional[str] = None
+    enable_parent_retrieval: Optional[bool] = None
 
 
 class KBResponse(BaseModel):
@@ -25,6 +35,11 @@ class KBResponse(BaseModel):
     owner_id: Optional[str]
     created_at: str
     updated_at: str
+    chunk_size: Optional[int] = None
+    chunk_overlap: Optional[int] = None
+    parent_chunk_size: Optional[int] = None
+    split_method: str = "fixed"
+    enable_parent_retrieval: Optional[bool] = None
 
 
 class DocResponse(BaseModel):

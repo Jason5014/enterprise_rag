@@ -33,9 +33,19 @@ class KBManager:
     # ------------------------------------------------------------------
 
     def create_kb(self, name: str, description: str = "", config_name: str = "base",
-                  owner_id: Optional[str] = None) -> str:
+                  owner_id: Optional[str] = None,
+                  chunk_size: Optional[int] = None,
+                  chunk_overlap: Optional[int] = None,
+                  parent_chunk_size: Optional[int] = None,
+                  split_method: str = "fixed",
+                  enable_parent_retrieval: Optional[bool] = None) -> str:
         """创建知识库，返回 kb_id"""
-        kb_id = self.meta.create_kb(name, description, config_name, owner_id)
+        kb_id = self.meta.create_kb(
+            name, description, config_name, owner_id,
+            chunk_size=chunk_size, chunk_overlap=chunk_overlap,
+            parent_chunk_size=parent_chunk_size, split_method=split_method,
+            enable_parent_retrieval=enable_parent_retrieval,
+        )
         # 预建目录，方便后续文件上传不出错
         self.fs.get_dir_path(kb_id, "raw")
         self.fs.get_dir_path(kb_id, "parsed")
@@ -174,6 +184,19 @@ class KBManager:
             self._mark_job(job_id, "failed", error_msg=str(e))
             self.meta.update_kb(kb_id, status="error")
 
+    def _apply_kb_overrides(self, rc, kb):
+        """用 KB 记录中的分片配置覆盖预设默认值"""
+        if kb.chunk_size is not None:
+            rc.chunk_size = kb.chunk_size
+        if kb.chunk_overlap is not None:
+            rc.chunk_overlap = kb.chunk_overlap
+        if kb.parent_chunk_size is not None:
+            rc.parent_chunk_size = kb.parent_chunk_size
+        if kb.split_method:
+            rc.split_method = kb.split_method
+        if kb.enable_parent_retrieval is not None:
+            rc.enable_parent_retrieval = kb.enable_parent_retrieval
+
     def _run_index(self, kb_id: str, job_id: str):
         self._mark_job(job_id, "running", stage_msg="开始构建索引")
         try:
@@ -189,6 +212,7 @@ class KBManager:
             config = get_preset(kb.config_name)
             rc = config.retrieval
             ec = config.embedding
+            self._apply_kb_overrides(rc, kb)
 
             self._mark_job(job_id, "running", stage_msg="加载解析结果", progress=0.1)
             splitter = TextSplitter(rc)
@@ -257,6 +281,7 @@ class KBManager:
             config = get_preset(kb.config_name)
             rc = config.retrieval
             ec = config.embedding
+            self._apply_kb_overrides(rc, kb)
 
             self._mark_job(job_id, "running", stage_msg="[2/2] 构建向量索引", progress=0.5)
             splitter = TextSplitter(rc)
@@ -312,6 +337,9 @@ class KBManager:
             rc.index_dir = kb.index_dir
         else:
             rc.index_dir = str(self.fs.get_dir_path(kb_id, "chunked"))
+
+        # 应用 KB 级分片配置覆盖
+        self._apply_kb_overrides(rc, kb)
 
         config.retrieval = rc
 

@@ -41,6 +41,12 @@ class KBRecord:
     updated_at: str
     owner_id: Optional[str] = None
     index_dir: Optional[str] = None  # 覆盖默认索引路径，内置/迁移 KB 使用
+    # 分片配置（None = 使用预设默认值）
+    chunk_size: Optional[int] = None
+    chunk_overlap: Optional[int] = None
+    parent_chunk_size: Optional[int] = None
+    split_method: str = "fixed"      # fixed / recursive / sentence / sliding
+    enable_parent_retrieval: Optional[bool] = None
 
 
 @dataclass

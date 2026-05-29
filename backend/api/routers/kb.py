@@ -20,6 +20,9 @@ def _kb_resp(kb) -> KBResponse:
         config_name=kb.config_name, status=kb.status,
         doc_count=kb.doc_count, chunk_count=kb.chunk_count,
         owner_id=kb.owner_id, created_at=kb.created_at, updated_at=kb.updated_at,
+        chunk_size=kb.chunk_size, chunk_overlap=kb.chunk_overlap,
+        parent_chunk_size=kb.parent_chunk_size, split_method=kb.split_method,
+        enable_parent_retrieval=kb.enable_parent_retrieval,
     )
 
 
@@ -56,6 +59,11 @@ def create_kb(body: KBCreateRequest, mgr=Depends(get_kb_manager),
         description=body.description,
         config_name=body.config_name,
         owner_id=user.user_id,
+        chunk_size=body.chunk_size,
+        chunk_overlap=body.chunk_overlap,
+        parent_chunk_size=body.parent_chunk_size,
+        split_method=body.split_method,
+        enable_parent_retrieval=body.enable_parent_retrieval,
     )
     return _kb_resp(mgr.get_kb(kb_id))
 
@@ -74,7 +82,7 @@ def update_kb(kb_id: str, body: KBUpdateRequest,
     kb = mgr.get_kb(kb_id)
     if kb is None:
         raise HTTPException(404, "知识库不存在")
-    updates = body.model_dump(exclude_none=True)
+    updates = body.model_dump(exclude_unset=True)
     if updates:
         mgr.update_kb(kb_id, **updates)
     return _kb_resp(mgr.get_kb(kb_id))

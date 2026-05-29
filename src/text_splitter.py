@@ -51,7 +51,9 @@ class ParentChunk(Chunk):
 
 
 class TextSplitter:
-    """文本分块器 - 支持父子Chunk"""
+    """文本分块器 - 支持父子Chunk和多种分片策略"""
+
+    SUPPORTED_METHODS = ("fixed", "recursive", "sentence", "sliding")
 
     def __init__(self, config: Optional[RetrievalConfig] = None):
         self.config = config or RetrievalConfig()
@@ -59,6 +61,10 @@ class TextSplitter:
         self.chunk_overlap = self.config.chunk_overlap
         self.parent_chunk_size = self.config.parent_chunk_size
         self.enable_parent = self.config.enable_parent_retrieval
+        self.split_method = getattr(self.config, 'split_method', 'fixed')
+        if self.split_method not in self.SUPPORTED_METHODS:
+            logger.warning("未知分片策略 '%s'，回退到 fixed", self.split_method)
+            self.split_method = "fixed"
         self.separators = ["\n\n", "\n", " ", ""]
 
     def split_text(self, text: str, doc_id: str = "") -> Tuple[List[Chunk], List[ParentChunk]]:
@@ -86,165 +92,218 @@ class TextSplitter:
 
     def _create_parent_chunks(self, text: str, doc_id: str) -> List[ParentChunk]:
         """创建父Chunk"""
+        segments = self._split_into_segments(text, self.parent_chunk_size, self.chunk_overlap)
         parent_chunks = []
-        start = 0
-        parent_idx = 0
-
-        while start < len(text):
-            end = min(start + self.parent_chunk_size, len(text))
-            chunk_text = text[start:end]
-
-            # 尝试在合适的位置分割（不切断句子）
-            if end < len(text):
-                split_pos = self._find_best_split_position(chunk_text)
-                if split_pos > 0:
-                    chunk_text = chunk_text[:split_pos]
-                    end = start + split_pos
-
-            # 防止无限循环：当剩余文本不足时，直接取到最后
-            remaining = len(text) - end
-            if remaining <= 0:
-                # 已经处理完或剩余太少，直接取剩余文本并结束
-                if start < len(text):
-                    chunk_text = text[start:].strip()
-                    if chunk_text:
-                        parent_id = f"{doc_id}_parent_{parent_idx}" if doc_id else f"parent_{uuid.uuid4().hex[:8]}"
-                        parent = ParentChunk(
-                            text=chunk_text,
-                            parent_id=parent_id,
-                            metadata={
-                                "doc_id": doc_id,
-                                "char_start": start,
-                                "char_end": len(text),
-                                "parent_idx": parent_idx
-                            }
-                        )
-                        parent_chunks.append(parent)
-                break
-
-            parent_id = f"{doc_id}_parent_{parent_idx}" if doc_id else f"parent_{uuid.uuid4().hex[:8]}"
-            parent = ParentChunk(
-                text=chunk_text.strip(),
-                parent_id=parent_id,
-                metadata={
-                    "doc_id": doc_id,
-                    "char_start": start,
-                    "char_end": end,
-                    "parent_idx": parent_idx
-                }
-            )
-            parent_chunks.append(parent)
-
-            parent_idx += 1
-            start = end - self.chunk_overlap
+        offset = 0
+        for i, seg in enumerate(segments):
+            # 计算在原文中的位置
+            start = text.find(seg, offset) if offset < len(text) else offset
             if start < 0:
-                start = end  # 无重叠时直接跳到当前结束位置
-            if start >= len(text):
-                break
-            # 防止小重叠导致的死循环：剩余文本小于overlap*2时直接处理完
-            if len(text) - start < self.chunk_overlap * 2:
-                start = len(text)  # 剩余太少，直接结束
-
+                start = offset
+            parent_id = f"{doc_id}_parent_{i}" if doc_id else f"parent_{uuid.uuid4().hex[:8]}"
+            parent_chunks.append(ParentChunk(
+                text=seg,
+                parent_id=parent_id,
+                metadata={"doc_id": doc_id, "char_start": start, "char_end": start + len(seg), "parent_idx": i}
+            ))
+            offset = start + len(seg)
         return parent_chunks
 
     def _create_child_chunks(self, parent_chunks: List[ParentChunk]) -> List[Chunk]:
         """从父Chunk创建子Chunk"""
         child_chunks = []
-
         for parent in parent_chunks:
-            start = 0
-            child_idx = 0
-            parent_text = parent.text
-
-            while start < len(parent_text):
-                end = min(start + self.chunk_size, len(parent_text))
-                child_text = parent_text[start:end]
-
-                # 尝试在合适的位置分割
-                if end < len(parent_text):
-                    split_pos = self._find_best_split_position(child_text)
-                    if split_pos > 0:
-                        child_text = child_text[:split_pos]
-                        end = start + split_pos
-
-                chunk_id = f"{parent.parent_id}_child_{child_idx}"
-                child = Chunk(
-                    text=child_text.strip(),
-                    chunk_id=chunk_id,
-                    parent_id=parent.parent_id,
-                    metadata={
-                        **parent.metadata,
-                        "child_idx": child_idx
-                    }
-                )
-                child_chunks.append(child)
-
-                child_idx += 1
-                start = end - self.chunk_overlap
-                if start < 0:
-                    start = end
-                if start >= len(parent_text):
-                    break
-                # 防止小重叠导致的死循环
-                if len(parent_text) - start < self.chunk_overlap * 2:
-                    start = len(parent_text)
-
+            segments = self._split_into_segments(parent.text, self.chunk_size, self.chunk_overlap)
+            for j, seg in enumerate(segments):
+                chunk_id = f"{parent.parent_id}_child_{j}"
+                child_chunks.append(Chunk(
+                    text=seg, chunk_id=chunk_id, parent_id=parent.parent_id,
+                    metadata={**parent.metadata, "child_idx": j}
+                ))
         return child_chunks
 
     def _create_child_chunks_from_parents(self, parent_chunks: List[ParentChunk]) -> List[Chunk]:
         """直接从父Chunk文本创建子Chunk（不维护父子关系）"""
         child_chunks = []
-
         for parent in parent_chunks:
-            start = 0
-            child_idx = 0
-            parent_text = parent.text
-
-            while start < len(parent_text):
-                end = min(start + self.chunk_size, len(parent_text))
-                child_text = parent_text[start:end]
-
-                if end < len(parent_text):
-                    split_pos = self._find_best_split_position(child_text)
-                    if split_pos > 0:
-                        child_text = child_text[:split_pos]
-                        end = start + split_pos
-
-                chunk_id = f"{parent.parent_id}_c{child_idx}"
-                child = Chunk(
-                    text=child_text.strip(),
-                    chunk_id=chunk_id,
-                    parent_id=None,
-                    metadata={
-                        **parent.metadata,
-                        "child_idx": child_idx
-                    }
-                )
-                child_chunks.append(child)
-
-                child_idx += 1
-                start = end - self.chunk_overlap
-                if start < 0:
-                    start = end
-                if start >= len(parent_text):
-                    break
-
+            segments = self._split_into_segments(parent.text, self.chunk_size, self.chunk_overlap)
+            for j, seg in enumerate(segments):
+                chunk_id = f"{parent.parent_id}_c{j}"
+                child_chunks.append(Chunk(
+                    text=seg, chunk_id=chunk_id, parent_id=None,
+                    metadata={**parent.metadata, "child_idx": j}
+                ))
         return child_chunks
 
+    # ------------------------------------------------------------------
+    # 策略分发
+    # ------------------------------------------------------------------
+
+    def _split_into_segments(self, text: str, max_size: int, overlap: int) -> List[str]:
+        """根据 split_method 将文本分成若干段"""
+        if not text or not text.strip():
+            return []
+        if self.split_method == "recursive":
+            return self._split_recursive(text, max_size, overlap)
+        elif self.split_method == "sentence":
+            return self._split_sentence(text, max_size, overlap)
+        elif self.split_method == "sliding":
+            return self._split_sliding(text, max_size, overlap)
+        else:  # fixed
+            return self._split_fixed(text, max_size, overlap)
+
+    # ------------------------------------------------------------------
+    # 策略 1: fixed — 固定大小 + 句子边界检测（原有逻辑）
+    # ------------------------------------------------------------------
+
+    def _split_fixed(self, text: str, max_size: int, overlap: int) -> List[str]:
+        segments = []
+        start = 0
+        while start < len(text):
+            end = min(start + max_size, len(text))
+            chunk_text = text[start:end]
+            if end < len(text):
+                split_pos = self._find_best_split_position(chunk_text)
+                if split_pos > 0:
+                    chunk_text = chunk_text[:split_pos]
+                    end = start + split_pos
+            segments.append(chunk_text.strip())
+            new_start = end - overlap
+            if new_start <= start:
+                new_start = end
+            start = new_start
+        return [s for s in segments if s]
+
     def _find_best_split_position(self, text: str) -> int:
-        """找到最佳分割位置（句子边界）- 在最后1/4区域查找分隔符"""
+        """在最后1/4区域查找分隔符"""
         search_start = len(text) * 3 // 4
-
-        # 只在最后1/4区域搜索，避免大文本下rfind扫描整个字符串
         search_region = text[search_start:]
-
         for separator in ["\n\n", "\n", " "]:
             last_pos = search_region.rfind(separator)
             if last_pos >= 0:
                 return search_start + last_pos
-
-        # 如果找不到合适的分隔符，在3/4位置强制截断
         return len(text) * 3 // 4
+
+    # ------------------------------------------------------------------
+    # 策略 2: recursive — 递归分割（先段落，再句子，再字符）
+    # ------------------------------------------------------------------
+
+    def _split_recursive(self, text: str, max_size: int, overlap: int) -> List[str]:
+        separators = ["\n\n", "\n", "。", "！", "？", ". ", "! ", "? ", " ", ""]
+        return self._recursive_split(text, max_size, overlap, separators, 0)
+
+    def _recursive_split(self, text: str, max_size: int, overlap: int,
+                         separators: List[str], depth: int) -> List[str]:
+        if len(text) <= max_size:
+            return [text.strip()] if text.strip() else []
+
+        # 选择当前层级的分隔符
+        if depth >= len(separators):
+            # 所有分隔符都试过了，强制按大小截断
+            return self._split_fixed(text, max_size, overlap)
+
+        sep = separators[depth]
+        if sep == "":
+            parts = [text[i:i + max_size] for i in range(0, len(text), max_size)]
+        else:
+            parts = text.split(sep)
+
+        # 合并小片段
+        merged = []
+        current = ""
+        for part in parts:
+            candidate = current + sep + part if current else part
+            if len(candidate) <= max_size:
+                current = candidate
+            else:
+                if current:
+                    merged.append(current)
+                current = part
+        if current:
+            merged.append(current)
+
+        # 对仍然过大的片段递归处理
+        result = []
+        for chunk in merged:
+            if len(chunk) > max_size:
+                result.extend(self._recursive_split(chunk, max_size, overlap, separators, depth + 1))
+            else:
+                if chunk.strip():
+                    result.append(chunk.strip())
+
+        # 添加重叠
+        if overlap > 0 and len(result) > 1:
+            result = self._add_overlap_to_segments(result, overlap)
+
+        return result
+
+    # ------------------------------------------------------------------
+    # 策略 3: sentence — 严格按句子边界分割
+    # ------------------------------------------------------------------
+
+    def _split_sentence(self, text: str, max_size: int, overlap: int) -> List[str]:
+        # 按中英文句子结束符分割
+        sentence_pattern = re.compile(r'(?<=[。！？.!?])\s*')
+        sentences = sentence_pattern.split(text)
+        sentences = [s.strip() for s in sentences if s.strip()]
+
+        segments = []
+        current = ""
+        for sent in sentences:
+            candidate = current + sent if current else sent
+            if len(candidate) <= max_size:
+                current = candidate
+            else:
+                if current:
+                    segments.append(current)
+                # 单句超长时按 fixed 处理
+                if len(sent) > max_size:
+                    segments.extend(self._split_fixed(sent, max_size, overlap))
+                    current = ""
+                else:
+                    current = sent
+        if current:
+            segments.append(current)
+
+        # 添加重叠
+        if overlap > 0 and len(segments) > 1:
+            segments = self._add_overlap_to_segments(segments, overlap)
+
+        return [s for s in segments if s.strip()]
+
+    # ------------------------------------------------------------------
+    # 策略 4: sliding — 滑动窗口（固定步长，无边界检测）
+    # ------------------------------------------------------------------
+
+    def _split_sliding(self, text: str, max_size: int, overlap: int) -> List[str]:
+        step = max_size - overlap
+        if step <= 0:
+            step = max_size
+        segments = []
+        start = 0
+        while start < len(text):
+            end = min(start + max_size, len(text))
+            chunk = text[start:end].strip()
+            if chunk:
+                segments.append(chunk)
+            if end >= len(text):
+                break
+            start += step
+        return segments
+
+    # ------------------------------------------------------------------
+    # 工具方法
+    # ------------------------------------------------------------------
+
+    def _add_overlap_to_segments(self, segments: List[str], overlap: int) -> List[str]:
+        """为分段列表添加前后重叠"""
+        if len(segments) <= 1:
+            return segments
+        result = [segments[0]]
+        for i in range(1, len(segments)):
+            prev_tail = segments[i - 1][-overlap:]
+            result.append(prev_tail + segments[i])
+        return result
 
     def split_documents(self, documents: List[Dict[str, Any]], doc_id_field: str = "doc_id") -> Dict[str, Any]:
         """

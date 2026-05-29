@@ -29,6 +29,7 @@ class RetrievalConfig(BaseConfig):
     chunk_overlap: int = 150  # 子Chunk重叠大小
     parent_chunk_size: int = 800  # 父Chunk大小
     enable_parent_retrieval: bool = True  # 是否启用父子关联
+    split_method: str = "fixed"  # 分片策略: fixed / recursive / sentence / sliding
 
     # 检索配置
     bm25_weight: float = 0.3  # BM25权重（fusion_method=weighted 时生效）

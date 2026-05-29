@@ -109,7 +109,7 @@
 
       <!-- Tab 3: 配置 -->
       <el-tab-pane label="🔧 配置" name="config">
-        <el-descriptions :column="2" border>
+        <el-descriptions :column="2" border style="margin-bottom:20px;">
           <el-descriptions-item label="知识库 ID">{{ kb?.kb_id }}</el-descriptions-item>
           <el-descriptions-item label="配置预设">{{ kb?.config_name }}</el-descriptions-item>
           <el-descriptions-item label="状态">{{ kb?.status }}</el-descriptions-item>
@@ -119,6 +119,39 @@
             {{ kb?.created_at.slice(0, 16).replace('T', ' ') }}
           </el-descriptions-item>
         </el-descriptions>
+
+        <h3 style="margin:16px 0 12px;">分片配置</h3>
+        <el-alert type="info" :closable="false" style="margin-bottom:16px;">
+          修改分片参数后需点击「保存」并重新处理知识库才能生效。
+        </el-alert>
+        <el-form label-width="140px" style="max-width:500px;">
+          <el-form-item label="分片策略">
+            <el-select v-model="splitForm.split_method" style="width:100%;">
+              <el-option label="固定大小 + 边界检测" value="fixed" />
+              <el-option label="递归分割（段落→句子→字符）" value="recursive" />
+              <el-option label="句子边界" value="sentence" />
+              <el-option label="滑动窗口" value="sliding" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="Chunk 大小">
+            <el-input-number v-model="splitForm.chunk_size" :min="100" :max="2000" :step="50" />
+            <span style="color:#909399; margin-left:8px;">字符</span>
+          </el-form-item>
+          <el-form-item label="Chunk 重叠">
+            <el-input-number v-model="splitForm.chunk_overlap" :min="0" :max="500" :step="10" />
+            <span style="color:#909399; margin-left:8px;">字符</span>
+          </el-form-item>
+          <el-form-item label="父 Chunk 大小">
+            <el-input-number v-model="splitForm.parent_chunk_size" :min="500" :max="5000" :step="100" />
+            <span style="color:#909399; margin-left:8px;">字符</span>
+          </el-form-item>
+          <el-form-item label="父子检索">
+            <el-switch v-model="splitForm.enable_parent_retrieval" />
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" :loading="savingConfig" @click="saveSplitConfig">保存</el-button>
+          </el-form-item>
+        </el-form>
       </el-tab-pane>
     </el-tabs>
   </div>
@@ -149,6 +182,15 @@ const parsedLoading = ref(false)
 const parsedData = ref<{ filename: string; total_pages: number; pages: any[]; markdown: string } | null>(null)
 const parsedTab = ref('pages')
 
+const savingConfig = ref(false)
+const splitForm = ref({
+  chunk_size: 500,
+  chunk_overlap: 150,
+  parent_chunk_size: 800,
+  split_method: 'fixed',
+  enable_parent_retrieval: true,
+})
+
 onMounted(async () => {
   await Promise.all([fetchKB(), fetchDocs(), fetchJobs()])
   pageLoading.value = false
@@ -159,6 +201,14 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 async function fetchKB() {
   const res = await kbApi.get(kbId)
   kb.value = res.data
+  // 同步分片配置到表单
+  splitForm.value = {
+    chunk_size: res.data.chunk_size ?? 500,
+    chunk_overlap: res.data.chunk_overlap ?? 150,
+    parent_chunk_size: res.data.parent_chunk_size ?? 800,
+    split_method: res.data.split_method || 'fixed',
+    enable_parent_retrieval: res.data.enable_parent_retrieval ?? true,
+  }
 }
 async function fetchDocs() {
   docsLoading.value = true
@@ -231,6 +281,16 @@ async function viewParsed(doc: Doc) {
   } finally {
     parsedLoading.value = false
   }
+}
+
+async function saveSplitConfig() {
+  savingConfig.value = true
+  try {
+    await kbApi.update(kbId, { ...splitForm.value })
+    ElMessage.success('分片配置已保存，重新处理知识库后生效')
+    await fetchKB()
+  } catch { /* 已统一提示 */ }
+  finally { savingConfig.value = false }
 }
 
 const statusType = computed(() =>
