@@ -338,7 +338,7 @@ class RAGPipeline:
                     "score": round(float(r.get("combined_score") or r.get("score") or 0), 4),
                     "page": meta.get("page"),
                     "source": meta.get("source", ""),
-                    "snippet": (r.get("content") or "")[:200],
+                    "snippet": (r.get("text") or r.get("parent_text") or "")[:200],
                 })
             return out
 
