@@ -32,10 +32,8 @@ def run_eval(
 ):
     """SSE 流式运行评估，实时推送进度"""
     from config.presets import get_preset
-    from src.eval.evaluator import Evaluator
     from src.eval.eval_history import EvalHistory
     from src.pipeline import RAGPipeline
-    import uuid
 
     async def generator():
         try:
@@ -67,11 +65,14 @@ def run_eval(
                 except Exception as e:
                     results.append({"question": q, "answer": "ERROR", "error": str(e)})
 
-            # 保存历史
+            # 保存历史（eval_id 由 EvalHistory.save() 自动生成并返回）
             history = EvalHistory()
-            eval_id = str(uuid.uuid4())
-            history.save(eval_id=eval_id, config_name=body.config_name,
-                         question_count=total, results=results)
+            eval_id = history.save(
+                config_name=body.config_name,
+                question_count=total,
+                metrics={},          # 简单模式：无量化指标，仅保存问答详情
+                query_results=results,
+            )
 
             yield {"data": json.dumps({"stage": "done", "eval_id": eval_id,
                                        "total": total, "results": results})}
@@ -87,7 +88,7 @@ def eval_history(limit: int = Query(20), user=Depends(get_current_user)):
     """返回历史评估记录列表"""
     from src.eval.eval_history import EvalHistory
     history = EvalHistory()
-    records = history.list_records(limit=limit)
+    records = history.get_history(limit=limit)
     return records
 
 
