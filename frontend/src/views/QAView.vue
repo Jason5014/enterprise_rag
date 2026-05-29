@@ -557,7 +557,7 @@ async function submitBadFeedback(msg: Message, idx: number) {
 }
 .chunk-snippet {
   font-size: 11px; color: #64748b;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  white-space: pre-wrap; word-break: break-all;
 }
 .chunk-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex-shrink: 0; }
 .chunk-score { font-size: 11px; font-weight: 700; }
