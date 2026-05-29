@@ -64,38 +64,55 @@ def _ensure_builtin_kb(store: SQLiteMetadataStore) -> None:
     """首次启动时，若 data/chunked/ 有已构建的索引，自动注册为内置知识库。
     这样用户无需跑 process-reports CLI，直接在 UI 里就能看到并使用它。
     """
-    if store.get_kb(BUILTIN_KB_ID) is not None:
-        return  # 已注册，跳过
-
     builtin_chunked = ROOT / "data" / "chunked"
-    if not (builtin_chunked / "chunks.json").exists():
-        return  # 索引还不存在，跳过（等用户跑完 process-reports 再注册）
-
-    # 统计 chunk 数量
-    import json as _json
-    try:
-        data = _json.loads((builtin_chunked / "chunks.json").read_text(encoding="utf-8"))
-        chunk_count = len(data.get("chunks", []))
-    except Exception:
-        chunk_count = 0
-
-    # 统计 PDF 数量
     raw_dir = ROOT / "data" / "pdf_reports"
-    doc_count = len(list(raw_dir.glob("*.pdf"))) if raw_dir.exists() else 0
 
-    store.create_kb(
-        kb_id=BUILTIN_KB_ID,
-        name="内置知识库（中芯国际研报）",
-        description="由 data/pdf_reports/ 目录中的研报自动构建，使用 data/chunked/ 索引",
-        config_name="base",
-        status="ready",
-        index_dir=str(builtin_chunked),
-    )
-    store.update_kb(BUILTIN_KB_ID, doc_count=doc_count, chunk_count=chunk_count)
-    import logging as _logging
-    _logging.getLogger(__name__).info(
-        "已自动注册内置 KB: %d 文件 / %d chunks", doc_count, chunk_count
-    )
+    kb = store.get_kb(BUILTIN_KB_ID)
+
+    if kb is None:
+        # KB 不存在，且索引也没建好，跳过
+        if not (builtin_chunked / "chunks.json").exists():
+            return
+
+        # 统计 chunk 数量
+        import json as _json
+        try:
+            data = _json.loads((builtin_chunked / "chunks.json").read_text(encoding="utf-8"))
+            chunk_count = len(data.get("chunks", []))
+        except Exception:
+            chunk_count = 0
+
+        store.create_kb(
+            kb_id=BUILTIN_KB_ID,
+            name="内置知识库（中芯国际研报）",
+            description="由 data/pdf_reports/ 目录中的研报自动构建，使用 data/chunked/ 索引",
+            config_name="base",
+            status="ready",
+            index_dir=str(builtin_chunked),
+        )
+
+        import logging as _logging
+        _logging.getLogger(__name__).info(
+            "已自动注册内置 KB: %d chunks", chunk_count
+        )
+
+    # 补注册文档记录（KB 已存在但 documents 表可能为空）
+    existing_docs = store.list_documents(BUILTIN_KB_ID)
+    existing_filenames = {d.filename for d in existing_docs}
+
+    if raw_dir.exists():
+        for pdf_file in sorted(raw_dir.glob("*.pdf")):
+            if pdf_file.name in existing_filenames:
+                continue
+            doc_id = store.create_document(
+                kb_id=BUILTIN_KB_ID,
+                filename=pdf_file.name,
+                file_type="pdf",
+                file_size=pdf_file.stat().st_size,
+                storage_path=str(pdf_file),
+            )
+            # 标记为已解析（内置 KB 的解析数据已存在）
+            store.update_document(doc_id, parse_status="done")
 
 
 # ---------------------------------------------------------------------------
