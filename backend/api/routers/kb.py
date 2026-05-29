@@ -1,8 +1,11 @@
 from typing import List
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 
 from backend.api.deps import get_kb_manager, get_current_user
+
+ROOT = Path(__file__).parent.parent.parent.parent
 from backend.api.schemas.kb import (
     KBCreateRequest, KBUpdateRequest, KBResponse,
     DocResponse, JobResponse,
@@ -112,6 +115,66 @@ def list_files(kb_id: str, mgr=Depends(get_kb_manager), user=Depends(get_current
 def delete_file(kb_id: str, doc_id: str,
                 mgr=Depends(get_kb_manager), user=Depends(get_current_user)):
     mgr.delete_document(doc_id)
+
+
+@router.get("/{kb_id}/files/{doc_id}/download")
+def download_file(kb_id: str, doc_id: str,
+                  mgr=Depends(get_kb_manager), user=Depends(get_current_user)):
+    """下载原始文件"""
+    from fastapi.responses import FileResponse
+    doc = mgr.meta.get_document(doc_id)
+    if doc is None:
+        raise HTTPException(404, "文档不存在")
+    local_path = doc.storage_path
+    if not local_path or not Path(local_path).exists():
+        # 尝试从 storage_path 解析
+        local_path = mgr.fs.get_local_path(doc.storage_path)
+    if not Path(local_path).exists():
+        raise HTTPException(404, "文件不存在")
+    return FileResponse(local_path, filename=doc.filename, media_type="application/pdf")
+
+
+@router.get("/{kb_id}/files/{doc_id}/parsed")
+def get_parsed_content(kb_id: str, doc_id: str,
+                       mgr=Depends(get_kb_manager), user=Depends(get_current_user)):
+    """获取文档的解析结果（Markdown 内容）"""
+    import json as _json
+    doc = mgr.meta.get_document(doc_id)
+    if doc is None:
+        raise HTTPException(404, "文档不存在")
+
+    # 从 parsed 目录查找对应的 JSON 文件
+    parsed_dir = mgr.fs.get_dir_path(kb_id, "parsed")
+    if not parsed_dir.exists():
+        # 尝试全局 parsed 目录
+        parsed_dir = ROOT / "data" / "parsed"
+
+    # 通过 storage_path 的 sha1 或文件名匹配
+    matched_file = None
+    for f in parsed_dir.glob("*.json"):
+        try:
+            data = _json.loads(f.read_text(encoding="utf-8"))
+            source = data.get("metainfo", {}).get("source", "")
+            if source == doc.filename:
+                matched_file = f
+                break
+        except Exception:
+            continue
+
+    if matched_file is None:
+        raise HTTPException(404, "解析结果不存在，请先解析该文档")
+
+    data = _json.loads(matched_file.read_text(encoding="utf-8"))
+    pages = data.get("content", {}).get("pages", [])
+    markdown = data.get("content", {}).get("markdown", "")
+    total_pages = data.get("metainfo", {}).get("total_pages", 0)
+
+    return {
+        "filename": doc.filename,
+        "total_pages": total_pages,
+        "pages": pages,
+        "markdown": markdown,
+    }
 
 
 # --- Jobs ---

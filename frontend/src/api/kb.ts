@@ -37,6 +37,12 @@ export const kbApi = {
   listFiles: (kbId: string) => http.get<Doc[]>(`/kb/${kbId}/files`),
   deleteFile: (kbId: string, docId: string) =>
     http.delete(`/kb/${kbId}/files/${docId}`),
+  downloadFile: (kbId: string, docId: string) =>
+    `/api/kb/${kbId}/files/${docId}/download`,
+  getParsedContent: (kbId: string, docId: string) =>
+    http.get<{ filename: string; total_pages: number; pages: any[]; markdown: string }>(
+      `/kb/${kbId}/files/${docId}/parsed`
+    ),
 
   // jobs
   parse: (kbId: string) => http.post<Job>(`/kb/${kbId}/parse`),

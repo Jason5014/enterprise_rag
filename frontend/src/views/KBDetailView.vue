@@ -48,8 +48,11 @@
           <el-table-column label="上传时间" min-width="160">
             <template #default="{ row }">{{ row.upload_time.slice(0, 16).replace('T', ' ') }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="80" fixed="right">
+          <el-table-column label="操作" width="220" fixed="right">
             <template #default="{ row }">
+              <el-button text type="primary" size="small" @click="downloadFile(row)">下载</el-button>
+              <el-button text type="success" size="small" @click="viewParsed(row)"
+                :disabled="row.parse_status !== 'done'">查看解析</el-button>
               <el-button text type="danger" size="small" @click="deleteFile(row.doc_id)">删除</el-button>
             </template>
           </el-table-column>
@@ -80,6 +83,29 @@
         </el-timeline>
         <el-empty v-if="jobs.length === 0" description="暂无任务" />
       </el-tab-pane>
+
+      <!-- 解析结果弹窗 -->
+    <el-dialog v-model="parsedVisible" :title="`解析结果 — ${parsedData?.filename ?? ''}`" width="80%" top="5vh"
+      destroy-on-close>
+      <div v-if="parsedLoading" v-loading="true" style="height:200px;"></div>
+      <div v-else-if="parsedData">
+        <div style="margin-bottom:12px; color:#909399; font-size:13px;">
+          共 {{ parsedData.total_pages }} 页，{{ parsedData.pages.length }} 个文本块
+        </div>
+        <el-tabs v-model="parsedTab" type="card">
+          <el-tab-pane label="按页查看" name="pages">
+            <div v-for="p in parsedData.pages" :key="p.page"
+              style="margin-bottom:16px; border:1px solid #ebeef5; border-radius:8px; padding:12px;">
+              <div style="font-weight:600; color:#409eff; margin-bottom:8px;">第 {{ p.page }} 页</div>
+              <pre style="white-space:pre-wrap; word-break:break-all; font-size:13px; color:#303133; margin:0; max-height:400px; overflow-y:auto;">{{ p.text }}</pre>
+            </div>
+          </el-tab-pane>
+          <el-tab-pane label="完整 Markdown" name="markdown">
+            <pre style="white-space:pre-wrap; word-break:break-all; font-size:13px; color:#303133; max-height:70vh; overflow-y:auto;">{{ parsedData.markdown }}</pre>
+          </el-tab-pane>
+        </el-tabs>
+      </div>
+    </el-dialog>
 
       <!-- Tab 3: 配置 -->
       <el-tab-pane label="🔧 配置" name="config">
@@ -117,6 +143,11 @@ const kb = ref<KB | null>(null)
 const docs = ref<Doc[]>([])
 const jobs = ref<Job[]>([])
 let pollTimer: ReturnType<typeof setInterval> | null = null
+
+const parsedVisible = ref(false)
+const parsedLoading = ref(false)
+const parsedData = ref<{ filename: string; total_pages: number; pages: any[]; markdown: string } | null>(null)
+const parsedTab = ref('pages')
 
 onMounted(async () => {
   await Promise.all([fetchKB(), fetchDocs(), fetchJobs()])
@@ -176,6 +207,30 @@ async function deleteFile(docId: string) {
   await kbApi.deleteFile(kbId, docId)
   ElMessage.success('已删除')
   await fetchDocs(); await fetchKB()
+}
+
+function downloadFile(doc: Doc) {
+  const url = kbApi.downloadFile(kbId, doc.doc_id)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = doc.filename
+  a.click()
+}
+
+async function viewParsed(doc: Doc) {
+  parsedVisible.value = true
+  parsedLoading.value = true
+  parsedData.value = null
+  parsedTab.value = 'pages'
+  try {
+    const res = await kbApi.getParsedContent(kbId, doc.doc_id)
+    parsedData.value = res.data
+  } catch {
+    ElMessage.error('获取解析结果失败')
+    parsedVisible.value = false
+  } finally {
+    parsedLoading.value = false
+  }
 }
 
 const statusType = computed(() =>
