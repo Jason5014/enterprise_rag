@@ -321,6 +321,14 @@ class RAGPipeline:
             self.conversation_history.add("user", question)
             self.conversation_history.add("assistant", "".join(full_answer))
 
+        # 末尾 yield 元数据（供 SSE 层提取页码、chunk 数等）
+        pages = sorted(set(
+            r.get("metadata", {}).get("page")
+            for r in context
+            if r.get("metadata", {}).get("page") is not None
+        ))
+        yield {"__meta__": True, "pages": pages, "chunk_count": len(context)}
+
     def _merge_search_results(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """合并多个搜索结果，按chunk_id去重并保留最高分"""
         seen = {}
