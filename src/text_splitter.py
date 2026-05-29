@@ -293,6 +293,38 @@ class TextSplitter:
         }
 
 
+    def split_directory(self, directory: str) -> List[Dict[str, Any]]:
+        """
+        读取目录下的所有 Markdown 文件并分块
+
+        Args:
+            directory: 包含 .md 文件的目录路径
+
+        Returns:
+            扁平化的 chunk 字典列表（包含 text, chunk_id, parent_id, metadata）
+        """
+        dir_path = Path(directory)
+        documents = []
+
+        for md_file in sorted(dir_path.glob("*.md")):
+            text = md_file.read_text(encoding="utf-8")
+            if not text.strip():
+                continue
+            doc_id = md_file.stem
+            documents.append({
+                "text": text,
+                "doc_id": doc_id,
+                "metadata": {"source_file": md_file.name}
+            })
+
+        if not documents:
+            logger.warning("目录 %s 下未找到 .md 文件", directory)
+            return []
+
+        result = self.split_documents(documents)
+        return result["chunks"]
+
+
 def text_splitter_cli():
     """CLI入口"""
     import sys

@@ -33,5 +33,6 @@ app.include_router(system.router,  prefix="/api/system",  tags=["系统"])
 
 
 @app.get("/api/health")
+@app.get("/health")
 def health():
     return {"status": "ok"}
