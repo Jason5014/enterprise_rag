@@ -1,35 +1,43 @@
 <template>
   <div class="page-container">
-    <div class="page-header">
-      <h2>质量监控</h2>
-      <el-button :icon="Refresh" @click="fetchAll">刷新</el-button>
+    <div class="page-head">
+      <h2>📡 质量监控</h2>
+      <el-button :icon="Refresh" @click="fetchAll" circle />
     </div>
 
     <!-- 概览统计 -->
-    <el-row :gutter="16" style="margin-bottom:20px;">
+    <el-row :gutter="16" style="margin-bottom:24px;">
       <el-col :span="6">
-        <el-card shadow="hover">
-          <el-statistic title="总问答次数" :value="stats.total" />
-        </el-card>
+        <div class="stat-card stat-card-accent-l" style="--c:#3b82f6;">
+          <div class="stat-card-label">💬 总问答次数</div>
+          <div class="stat-card-value">{{ stats.total }}</div>
+          <div class="stat-card-sub">累计问答记录</div>
+        </div>
       </el-col>
       <el-col :span="6">
-        <el-card shadow="hover">
-          <el-statistic title="好评次数" :value="stats.good">
-            <template #suffix><span style="color:#67c23a; font-size:14px;"> 👍</span></template>
-          </el-statistic>
-        </el-card>
+        <div class="stat-card stat-card-accent-l" style="--c:#22c55e;">
+          <div class="stat-card-label">👍 好评次数</div>
+          <div class="stat-card-value" style="color:#16a34a;">{{ stats.good }}</div>
+          <div class="stat-card-sub">用户认可的回答</div>
+        </div>
       </el-col>
       <el-col :span="6">
-        <el-card shadow="hover">
-          <el-statistic title="差评次数" :value="stats.bad">
-            <template #suffix><span style="color:#f56c6c; font-size:14px;"> 👎</span></template>
-          </el-statistic>
-        </el-card>
+        <div class="stat-card stat-card-accent-l" style="--c:#ef4444;">
+          <div class="stat-card-label">👎 差评次数</div>
+          <div class="stat-card-value" style="color:#dc2626;">{{ stats.bad }}</div>
+          <div class="stat-card-sub">需要改进的回答</div>
+        </div>
       </el-col>
       <el-col :span="6">
-        <el-card shadow="hover">
-          <el-statistic title="好评率" :value="stats.good_rate" suffix="%" />
-        </el-card>
+        <div class="stat-card stat-card-accent-l"
+          :style="`--c:${stats.good_rate >= 80 ? '#22c55e' : stats.good_rate >= 60 ? '#f59e0b' : '#ef4444'}`">
+          <div class="stat-card-label">📈 好评率</div>
+          <div class="stat-card-value" :style="{ color: rateColor(stats.good_rate) }">{{ stats.good_rate }}<span style="font-size:16px; font-weight:500;">%</span></div>
+          <div class="stat-card-sub">
+            <el-progress :percentage="stats.good_rate" :color="rateColor(stats.good_rate)"
+              :stroke-width="4" :show-text="false" style="margin-top:4px;" />
+          </div>
+        </div>
       </el-col>
     </el-row>
 
@@ -729,9 +737,10 @@ const roadmapItems = computed(() => {
 </script>
 
 <style scoped>
-.page-container { padding: 24px; height: 100%; overflow-y: auto; box-sizing: border-box; }
-.page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
-.page-header h2 { margin: 0; }
+.page-container {
+  padding: 24px 28px; height: 100%; overflow-y: auto;
+  box-sizing: border-box; background: #f8fafc;
+}
 
 .error-row {
   display: flex;

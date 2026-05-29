@@ -109,38 +109,34 @@
     <template v-if="singleResult && evalMode === 'single'">
       <!-- 综合得分 -->
       <el-card shadow="never" class="score-card" style="margin-bottom:16px;">
-        <div style="display:flex; align-items:center; gap:24px;">
-          <div style="text-align:center; flex-shrink:0;">
-            <div class="score-num" :style="{ color: scoreColor(singleResult.composite_score) }">
-              {{ Math.round(singleResult.composite_score) }}
-            </div>
-            <div style="font-size:12px; color:#909399;">综合得分 / 100</div>
-            <el-tag :type="scoreLevelType(singleResult.composite_score)" size="small" style="margin-top:4px;">
+        <div class="score-layout">
+          <!-- 大圆环 -->
+          <div class="score-left">
+            <ScoreRing :value="singleResult.composite_score" :max="100" :size="92" />
+            <div class="score-subtitle">综合得分 / 100</div>
+            <el-tag :type="scoreLevelType(singleResult.composite_score)" size="small" effect="plain"
+              style="margin-top:4px;">
               {{ scoreLevel(singleResult.composite_score) }}
             </el-tag>
           </div>
-          <el-divider direction="vertical" style="height:70px;" />
-          <div style="flex:1;">
-            <el-row :gutter="8">
-              <el-col :span="3" v-for="m in mainMetricCards(singleResult.metrics)" :key="m.key">
-                <div class="metric-cell">
-                  <el-tooltip :content="metricHelp(m.key)">
-                    <div class="metric-val" :style="{ color: metricColor(m.val, m.key) }">{{ fmtPct(m.val) }}</div>
-                  </el-tooltip>
-                  <div class="metric-label">{{ m.label }}</div>
-                  <div class="metric-level">{{ metricEmoji(m.val, m.key) }}</div>
-                </div>
-              </el-col>
-              <el-col :span="3">
-                <div class="metric-cell">
-                  <div class="metric-val" :style="{ color: latencyColor(singleResult.avg_latency_ms) }">
-                    {{ Math.round(singleResult.avg_latency_ms) }}
-                  </div>
-                  <div class="metric-label">延迟(ms)</div>
-                  <div class="metric-level">{{ latencyEmoji(singleResult.avg_latency_ms) }}</div>
-                </div>
-              </el-col>
-            </el-row>
+          <div class="score-divider" />
+          <!-- 各指标小环 -->
+          <div class="score-metrics">
+            <el-tooltip v-for="m in mainMetricCards(singleResult.metrics)" :key="m.key"
+              :content="metricHelp(m.key)" placement="top">
+              <div class="metric-cell">
+                <ScoreRing :value="m.val" :size="54" :label="m.label" />
+                <div class="metric-level">{{ metricEmoji(m.val, m.key) }}</div>
+              </div>
+            </el-tooltip>
+            <!-- 延迟 -->
+            <div class="metric-cell latency-cell">
+              <div class="latency-val" :style="{ color: latencyColor(singleResult.avg_latency_ms) }">
+                {{ Math.round(singleResult.avg_latency_ms) }}
+              </div>
+              <div class="metric-label">延迟 ms</div>
+              <div class="metric-level">{{ latencyEmoji(singleResult.avg_latency_ms) }}</div>
+            </div>
           </div>
         </div>
       </el-card>
@@ -193,16 +189,12 @@
                 </span>
               </span>
             </template>
-            <el-row :gutter="8" style="padding:8px 0;">
-              <el-col :span="4" v-for="key in ['recall@1','recall@3','recall@5','mrr','ndcg@5','hit@5']" :key="key">
-                <div class="metric-cell">
-                  <div class="metric-val" :style="{ color: metricColor(scores[key] ?? 0, key), fontSize:'18px' }">
-                    {{ fmtPct(scores[key] ?? 0) }}
-                  </div>
-                  <div class="metric-label">{{ key.toUpperCase() }}</div>
-                </div>
-              </el-col>
-            </el-row>
+            <div style="display:flex; flex-wrap:wrap; gap:12px; padding:10px 4px;">
+              <div v-for="key in ['hit@5','recall@5','mrr','ndcg@5','recall@3','recall@1']" :key="key"
+                class="metric-cell">
+                <ScoreRing :value="scores[key] ?? 0" :size="50" :label="key.toUpperCase()" />
+              </div>
+            </div>
           </el-collapse-item>
         </el-collapse>
       </el-card>
@@ -525,11 +517,56 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, defineComponent, h } from 'vue'
 import { VideoPlay, Refresh, Plus, QuestionFilled } from '@element-plus/icons-vue'
 import { kbApi } from '@/api/kb'
 import { useConfigStore } from '@/stores/config'
 import http from '@/api/http'
+
+// ── ScoreRing：纯 SVG 圆环指标组件 ──
+const ScoreRing = defineComponent({
+  props: {
+    value:  { type: Number, default: 0 },   // 0-1（指标）或 0-100（综合分）
+    max:    { type: Number, default: 1 },    // 1=百分比模式，100=分数模式
+    size:   { type: Number, default: 54 },
+    color:  { type: String, default: '' },
+    label:  { type: String, default: '' },
+  },
+  setup(props) {
+    const r = 22; const cx = 28; const cy = 28
+    const circ = 2 * Math.PI * r
+    return () => {
+      const pct    = props.max === 100 ? props.value / 100 : props.value
+      const clamped = Math.min(1, Math.max(0, pct))
+      const offset = circ * (1 - clamped)
+      const dispVal = props.max === 100 ? Math.round(props.value) : Math.round(props.value * 100)
+      const c = props.color || (clamped >= 0.8 ? '#22c55e' : clamped >= 0.55 ? '#f59e0b' : '#ef4444')
+      const fontSize = props.max === 100 ? (props.size > 70 ? '13px' : '11px') : '11px'
+      const dispText = props.max === 100 ? String(dispVal) : `${dispVal}%`
+      return h('div', { style: 'display:flex;flex-direction:column;align-items:center;gap:3px;' }, [
+        h('svg', { width: props.size, height: props.size, viewBox: '0 0 56 56' }, [
+          h('circle', { cx, cy, r, fill: 'none', stroke: '#f1f5f9', 'stroke-width': 5 }),
+          h('circle', {
+            cx, cy, r, fill: 'none', stroke: c, 'stroke-width': 5,
+            'stroke-linecap': 'round',
+            'stroke-dasharray': circ,
+            'stroke-dashoffset': offset,
+            transform: 'rotate(-90 28 28)',
+            style: 'transition:stroke-dashoffset .55s ease;',
+          }),
+          h('text', {
+            x: cx, y: cy,
+            'text-anchor': 'middle', 'dominant-baseline': 'middle',
+            style: `font-size:${fontSize};font-weight:700;fill:${c};`,
+          }, dispText),
+        ]),
+        props.label ? h('div', {
+          style: 'font-size:10px;color:#94a3b8;text-align:center;line-height:1.2;max-width:58px;',
+        }, props.label) : null,
+      ])
+    }
+  },
+})
 
 const configStore = useConfigStore()
 const kbList = ref<any[]>([])
@@ -952,24 +989,40 @@ function latencyEmoji(ms: number): string {
 </script>
 
 <style scoped>
-.page-container { padding: 24px; height: 100%; overflow-y: auto; box-sizing: border-box; }
+.page-container {
+  padding: 24px 28px; height: 100%; overflow-y: auto;
+  box-sizing: border-box; background: #f8fafc;
+}
 .page-header { display: flex; align-items: center; margin-bottom: 20px; }
-.page-header h2 { margin: 0; }
+.page-header h2 { margin: 0; font-size: 20px; font-weight: 700; color: #0f172a; letter-spacing: -.3px; }
 
-.score-card { background: linear-gradient(135deg, #409eff11, #67c23a11); }
-.score-num { font-size: 52px; font-weight: 800; line-height: 1; }
+/* Score card */
+.score-card {
+  background: linear-gradient(135deg, rgba(59,130,246,.05), rgba(34,197,94,.05)) !important;
+  border: 1px solid #e8edf3 !important;
+}
+.score-layout { display: flex; align-items: center; gap: 28px; }
+.score-left { display: flex; flex-direction: column; align-items: center; gap: 4px; flex-shrink: 0; }
+.score-subtitle { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+.score-divider {
+  width: 1px; height: 80px; background: #e8edf3; flex-shrink: 0;
+}
+.score-metrics {
+  flex: 1; display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start;
+}
 
-.metric-cell { text-align: center; padding: 6px 2px; }
-.metric-val { font-size: 22px; font-weight: 700; line-height: 1.2; }
-.metric-label { font-size: 11px; color: #909399; margin-top: 2px; }
-.metric-level { font-size: 11px; margin-top: 2px; }
+/* Metric cell */
+.metric-cell { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.metric-label { font-size: 10px; color: #94a3b8; text-align: center; }
+.metric-level { font-size: 10px; text-align: center; }
+
+/* Latency cell */
+.latency-cell { justify-content: center; min-width: 54px; }
+.latency-val { font-size: 20px; font-weight: 700; line-height: 1; }
 
 .trend-summary {
-  padding: 10px 14px;
-  background: #f8f9fa;
-  border-radius: 6px;
-  font-size: 13px;
-  color: #606266;
-  margin-bottom: 12px;
+  padding: 10px 14px; background: #f8fafc; border-radius: 8px;
+  font-size: 13px; color: #475569; margin-bottom: 12px;
+  border: 1px solid #e8edf3;
 }
 </style>

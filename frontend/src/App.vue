@@ -1,148 +1,108 @@
 <template>
   <router-view v-if="route.meta.public" />
-  <el-container v-else style="height: 100vh;">
+  <div v-else class="app-shell">
 
-    <!-- 左侧导航 -->
-    <el-aside width="220px" style="background:#1a2332; display:flex; flex-direction:column; overflow:hidden;">
-      <!-- Logo -->
-      <div style="padding:18px 16px 10px; color:#fff; font-size:15px; font-weight:700; letter-spacing:0.5px; flex-shrink:0;">
-        🧠 企业知识库
+    <!-- ───────── 侧边栏 ───────── -->
+    <aside class="sidebar">
+      <!-- 品牌 -->
+      <div class="brand">
+        <div class="brand-icon">🧠</div>
+        <div class="brand-text">
+          <div class="brand-name">企业知识库</div>
+          <div class="brand-sub">RAG · Powered by AI</div>
+        </div>
       </div>
 
-      <!-- 导航菜单 -->
-      <el-menu
-        :default-active="route.path"
-        router
-        background-color="#1a2332"
-        text-color="#b0bec5"
-        active-text-color="#64b5f6"
-        style="border:none; flex-shrink:0;"
-      >
-        <el-menu-item index="/qa">
-          <el-icon><ChatDotRound /></el-icon>
-          <span>问答助手</span>
-        </el-menu-item>
-        <el-menu-item index="/kb">
-          <el-icon><Files /></el-icon>
-          <span>知识库管理</span>
-        </el-menu-item>
-        <el-menu-item index="/eval">
-          <el-icon><DataAnalysis /></el-icon>
-          <span>评估测试</span>
-        </el-menu-item>
-        <el-menu-item index="/monitor">
-          <el-icon><Monitor /></el-icon>
-          <span>质量监控</span>
-        </el-menu-item>
-      </el-menu>
+      <!-- 导航 -->
+      <nav class="nav">
+        <router-link v-for="item in navItems" :key="item.path"
+          :to="item.path" class="nav-item" :class="{ active: route.path === item.path }">
+          <span class="nav-icon">{{ item.icon }}</span>
+          <span class="nav-label">{{ item.label }}</span>
+          <span v-if="route.path === item.path" class="nav-pip" />
+        </router-link>
+      </nav>
 
-      <!-- 分隔线 -->
-      <div style="border-top:1px solid #2d3e50; margin:8px 0; flex-shrink:0;" />
+      <div class="sidebar-divider" />
 
       <!-- 系统状态 -->
-      <div style="padding:8px 14px; flex-shrink:0;">
-        <div style="font-size:11px; color:#546e7a; font-weight:600; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;">
-          系统状态
-        </div>
-        <div v-if="systemStatus" style="display:flex; flex-direction:column; gap:4px;">
-          <div class="status-row">
-            <span class="status-label">📄 文档</span>
+      <div class="section" v-if="systemStatus">
+        <div class="section-title">系统状态</div>
+        <div class="status-grid">
+          <div class="status-item">
+            <span class="status-dot" :class="systemStatus.vector_ready ? 'ok' : 'warn'" />
+            <span class="status-key">向量库</span>
+            <span class="status-val">{{ systemStatus.vector_ready ? '就绪' : '未就绪' }}</span>
+          </div>
+          <div class="status-item">
+            <span class="status-dot ok" />
+            <span class="status-key">文档</span>
             <span class="status-val">{{ systemStatus.pdf_count }} 份</span>
           </div>
-          <div class="status-row">
-            <span class="status-label">✂️ 分块</span>
+          <div class="status-item">
+            <span class="status-dot ok" />
+            <span class="status-key">分块</span>
             <span class="status-val">{{ systemStatus.chunk_count }}</span>
           </div>
-          <div class="status-row">
-            <span class="status-label">🗃️ 向量库</span>
-            <el-tag :type="systemStatus.vector_ready ? 'success' : 'warning'" size="small" effect="dark">
-              {{ systemStatus.vector_ready ? '就绪' : '未就绪' }}
-            </el-tag>
-          </div>
-          <div class="status-row">
-            <span class="status-label">📚 知识库</span>
+          <div class="status-item">
+            <span class="status-dot ok" />
+            <span class="status-key">知识库</span>
             <span class="status-val">{{ systemStatus.kb_count }} 个</span>
           </div>
         </div>
-        <div v-else style="font-size:12px; color:#546e7a;">加载中...</div>
       </div>
 
-      <div style="border-top:1px solid #2d3e50; margin:6px 0; flex-shrink:0;" />
+      <div class="sidebar-divider" />
 
-      <!-- 配置区 -->
-      <div style="padding:8px 14px; flex-shrink:0;">
-        <div style="font-size:11px; color:#546e7a; font-weight:600; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px;">
-          检索配置
-        </div>
-        <!-- 预设选择 -->
-        <el-select
-          v-model="configStore.activeConfigName"
-          size="small"
-          style="width:100%; margin-bottom:8px;"
-          @change="onConfigChange"
-        >
-          <el-option label="BASE — 基础" value="base" />
-          <el-option label="FAST — 高速" value="fast" />
-          <el-option label="PRECISION — 高精度" value="precision" />
-          <el-option label="FULL — 完整" value="full" />
+      <!-- 检索配置 -->
+      <div class="section">
+        <div class="section-title">检索配置</div>
+        <el-select v-model="configStore.activeConfigName" size="small"
+          class="config-select" @change="onConfigChange">
+          <el-option v-for="(label, key) in CONFIG_LABELS" :key="key" :label="label" :value="key" />
         </el-select>
 
-        <!-- 配置快照徽章 -->
-        <div v-if="configStore.defaultsLoaded" class="config-badges">
-          <el-tooltip v-for="item in configBadges" :key="item.key" :content="item.label">
-            <span class="badge" :class="item.on ? 'badge-on' : 'badge-off'">
-              {{ item.icon }} {{ item.short }}
-            </span>
+        <!-- 功能徽章 -->
+        <div v-if="configStore.defaultsLoaded" class="badge-row">
+          <el-tooltip v-for="item in configBadges" :key="item.key" :content="item.label" placement="right">
+            <span class="mini-badge" :class="item.on ? 'on' : 'off'">{{ item.icon }}</span>
           </el-tooltip>
         </div>
 
-        <!-- 编辑 + 重置 按钮 -->
-        <div style="display:flex; gap:6px; margin-top:8px;">
-          <el-button size="small" type="primary" plain @click="drawerOpen = true" style="flex:1;">
-            📝 编辑配置
-          </el-button>
-          <el-button size="small" plain @click="resetConfig"
-            :disabled="!configStore.hasOverrides"
-            title="恢复预设默认值">
-            🔄
-          </el-button>
+        <div class="config-actions">
+          <button class="action-btn primary" @click="drawerOpen = true">✏️ 编辑配置</button>
+          <button class="action-btn" @click="resetConfig" :disabled="!configStore.hasOverrides"
+            :title="configStore.hasOverrides ? '恢复预设默认值' : ''">↺</button>
         </div>
-        <div v-if="configStore.hasOverrides" style="font-size:11px; color:#e6a23c; margin-top:4px;">
-          ⚠️ 已有自定义覆盖
-        </div>
+        <div v-if="configStore.hasOverrides" class="override-hint">⚡ 含自定义参数</div>
       </div>
 
       <!-- 弹性占位 -->
       <div style="flex:1;" />
 
-      <!-- 用户信息 -->
-      <div style="padding:12px 16px; border-top:1px solid #2d3e50; color:#78909c; font-size:13px; display:flex; align-items:center; gap:8px; flex-shrink:0;">
-        <el-icon><User /></el-icon>
-        <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
-          {{ authStore.user?.username ?? '...' }}
-        </span>
-        <el-button text style="color:#78909c; padding:0;" @click="handleLogout">退出</el-button>
+      <!-- 用户 -->
+      <div class="user-bar">
+        <div class="user-avatar">{{ userInitial }}</div>
+        <span class="user-name">{{ authStore.user?.username ?? '...' }}</span>
+        <button class="logout-btn" @click="handleLogout" title="退出登录">⏏</button>
       </div>
-    </el-aside>
+    </aside>
 
-    <!-- 主内容区 -->
-    <el-main style="padding:0; overflow:hidden;">
+    <!-- 主内容 -->
+    <main class="main-content">
       <router-view />
-    </el-main>
+    </main>
 
-    <!-- 配置编辑 Drawer -->
-    <ConfigDrawer
-      v-model="drawerOpen"
-      :config-name="configStore.activeConfigName"
-    />
-  </el-container>
+    <!-- 配置 Drawer -->
+    <ConfigDrawer v-model="drawerOpen" :config-name="configStore.activeConfigName" />
+  </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { useConfigStore } from '@/stores/config'
+import { useConfigStore, CONFIG_LABELS } from '@/stores/config'
 import ConfigDrawer from '@/components/ConfigDrawer.vue'
 import http from '@/api/http'
 
@@ -150,79 +110,156 @@ const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const configStore = useConfigStore()
-
 const drawerOpen = ref(false)
 const systemStatus = ref<any>(null)
 
+const navItems = [
+  { path: '/qa',      icon: '💬', label: '问答助手' },
+  { path: '/kb',      icon: '📚', label: '知识库管理' },
+  { path: '/eval',    icon: '📊', label: '评估测试' },
+  { path: '/monitor', icon: '📡', label: '质量监控' },
+]
+
 onMounted(async () => {
-  if (authStore.isLoggedIn() && !authStore.user) {
-    await authStore.fetchMe()
-  }
-  await Promise.all([
-    configStore.fetchPresetDefaults(),
-    fetchSystemStatus(),
-  ])
+  if (authStore.isLoggedIn() && !authStore.user) await authStore.fetchMe()
+  await Promise.all([configStore.fetchPresetDefaults(), fetchSystemStatus()])
 })
 
 async function fetchSystemStatus() {
-  try {
-    const r = await http.get('/system/status')
-    systemStatus.value = r.data
-  } catch { /* ignore */ }
+  try { const r = await http.get('/system/status'); systemStatus.value = r.data } catch { /* ignore */ }
 }
 
-function onConfigChange() {
-  // 切换预设时清除旧覆盖
-  configStore.resetOverrides(configStore.activeConfigName)
-}
+function onConfigChange() { configStore.resetOverrides(configStore.activeConfigName) }
+function resetConfig() { configStore.resetOverrides(configStore.activeConfigName) }
+function handleLogout() { authStore.logout(); router.push('/login') }
 
-function resetConfig() {
-  configStore.resetOverrides(configStore.activeConfigName)
-}
+const userInitial = computed(() => ((authStore.user?.username ?? 'U')[0] ?? 'U').toUpperCase())
 
-function handleLogout() {
-  authStore.logout()
-  router.push('/login')
-}
-
-// 配置快照徽章
 const configBadges = computed(() => {
   const eff = configStore.activeEffective
   return [
-    { key: 'parent', icon: '📎', short: '父子块', label: '父子块检索', on: eff.enable_parent_retrieval ?? true },
-    { key: 'history', icon: '💬', short: '对话', label: '对话历史', on: eff.enable_history ?? true },
-    { key: 'mq', icon: '🔄', short: 'MQ', label: 'MultiQuery扩展', on: eff.enable_multiquery ?? true },
-    { key: 'rw', icon: '✏️', short: '改写', label: 'Query改写', on: eff.enable_query_rewrite ?? true },
-    { key: 'rerank', icon: '🗳️', short: '重排', label: 'Rerank精排', on: eff.enable_rerank ?? true },
+    { key: 'parent', icon: '📎', label: '父子块检索', on: eff.enable_parent_retrieval ?? true },
+    { key: 'history', icon: '💬', label: '对话历史', on: eff.enable_history ?? true },
+    { key: 'mq', icon: '🔄', label: 'MultiQuery 扩展', on: eff.enable_multiquery ?? true },
+    { key: 'rw', icon: '✏️', label: 'Query 改写', on: eff.enable_query_rewrite ?? true },
+    { key: 'rerank', icon: '🗳️', label: 'Rerank 精排', on: eff.enable_rerank ?? true },
   ]
 })
-
-import { ChatDotRound, Files, DataAnalysis, Monitor, User } from '@element-plus/icons-vue'
 </script>
 
 <style scoped>
-.status-row {
+.app-shell { display: flex; height: 100vh; overflow: hidden; }
+
+/* ── Sidebar ── */
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--sidebar-bg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--sidebar-border);
+}
+
+.brand {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  font-size: 12px;
-  padding: 2px 0;
+  gap: 10px;
+  padding: 18px 16px 12px;
+  flex-shrink: 0;
 }
-.status-label { color: #78909c; }
-.status-val { color: #b0bec5; font-weight: 500; }
+.brand-icon {
+  width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0;
+  background: linear-gradient(135deg, #3b82f6, #6366f1);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px;
+}
+.brand-name { font-size: 14px; font-weight: 700; color: var(--sidebar-text-bright); letter-spacing: -.2px; }
+.brand-sub { font-size: 10px; color: var(--sidebar-text); margin-top: 1px; letter-spacing: .5px; }
 
-.config-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+.nav { display: flex; flex-direction: column; gap: 2px; padding: 4px 10px; flex-shrink: 0; }
+.nav-item {
+  display: flex; align-items: center; gap: 9px; padding: 8px 10px;
+  border-radius: 8px; color: var(--sidebar-text); text-decoration: none;
+  font-size: 13px; font-weight: 500; cursor: pointer;
+  transition: all .16s ease; position: relative;
 }
-.badge {
-  font-size: 11px;
-  padding: 2px 6px;
-  border-radius: 10px;
-  cursor: default;
-  user-select: none;
+.nav-item:hover { background: rgba(51,65,85,.35); color: var(--sidebar-text-bright); }
+.nav-item.active { background: var(--sidebar-active-bg); color: #93c5fd; }
+.nav-icon { font-size: 14px; width: 18px; text-align: center; flex-shrink: 0; }
+.nav-label { flex: 1; }
+.nav-pip {
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 20px; background: #3b82f6; border-radius: 3px 0 0 3px;
 }
-.badge-on  { background: #1b3a2c; color: #67c23a; }
-.badge-off { background: #2d2d2d; color: #546e7a; text-decoration: line-through; }
+
+.sidebar-divider { border-top: 1px solid var(--sidebar-border); margin: 6px 0; flex-shrink: 0; }
+
+.section { padding: 4px 14px 8px; flex-shrink: 0; }
+.section-title {
+  font-size: 10px; font-weight: 600; color: var(--sidebar-text);
+  letter-spacing: .8px; text-transform: uppercase; margin-bottom: 8px;
+}
+
+.status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 6px; }
+.status-item { display: flex; align-items: center; gap: 4px; font-size: 11px; }
+.status-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.status-dot.ok { background: #22c55e; box-shadow: 0 0 5px rgba(34,197,94,.5); }
+.status-dot.warn { background: #f59e0b; box-shadow: 0 0 5px rgba(245,158,11,.5); }
+.status-key { color: var(--sidebar-text); }
+.status-val { color: var(--sidebar-text-bright); font-weight: 500; margin-left: auto; }
+
+.config-select { width: 100%; }
+:deep(.config-select .el-input__wrapper) {
+  background: rgba(30,41,59,.6) !important;
+  border: 1px solid rgba(51,65,85,.6) !important;
+  box-shadow: none !important;
+}
+:deep(.config-select .el-input__inner) { color: var(--sidebar-text-bright) !important; font-size: 12px !important; }
+:deep(.config-select .el-select__caret) { color: var(--sidebar-text) !important; }
+
+.badge-row { display: flex; gap: 4px; flex-wrap: wrap; margin: 8px 0 6px; }
+.mini-badge {
+  width: 26px; height: 26px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; cursor: default; transition: opacity .16s;
+}
+.mini-badge.on { background: rgba(34,197,94,.12); opacity: 1; }
+.mini-badge.off { background: rgba(51,65,85,.25); opacity: .4; filter: grayscale(1); }
+
+.config-actions { display: flex; gap: 5px; }
+.action-btn {
+  flex: 1; padding: 5px 6px; border-radius: 6px;
+  border: 1px solid rgba(51,65,85,.5);
+  background: rgba(30,41,59,.4); color: var(--sidebar-text);
+  font-size: 11px; font-weight: 500; cursor: pointer;
+  transition: all .16s; white-space: nowrap; text-align: center;
+}
+.action-btn:hover { background: rgba(59,130,246,.15); color: #93c5fd; border-color: rgba(59,130,246,.4); }
+.action-btn.primary { color: #93c5fd; }
+.action-btn:disabled { opacity: .3; cursor: not-allowed; }
+.override-hint { font-size: 10px; color: #fbbf24; margin-top: 4px; }
+
+.user-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 14px; border-top: 1px solid var(--sidebar-border); flex-shrink: 0;
+}
+.user-avatar {
+  width: 28px; height: 28px; border-radius: 50%;
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; color: #fff; flex-shrink: 0;
+}
+.user-name {
+  flex: 1; font-size: 12px; color: var(--sidebar-text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.logout-btn {
+  background: none; border: none; color: var(--sidebar-text);
+  cursor: pointer; font-size: 14px; padding: 3px 4px;
+  border-radius: 4px; transition: color .16s; flex-shrink: 0;
+}
+.logout-btn:hover { color: #f87171; }
+
+.main-content { flex: 1; overflow: hidden; background: #f8fafc; }
 </style>
